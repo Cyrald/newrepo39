@@ -153,6 +153,36 @@ Preferred communication style: Simple, everyday language.
 
 ## Recent Changes
 
+### Fresh GitHub Import - Replit Environment Setup (November 16, 2025)
+
+**Setup Completed:**
+- ✅ Fresh clone from GitHub repository imported successfully
+- ✅ Installed all npm dependencies (607 packages)
+- ✅ Connected to PostgreSQL database (heliumdb on Helium)
+- ✅ Pushed database schema using Drizzle ORM (14 tables synchronized)
+- ✅ Configured development workflow on port 5000 with webview output
+- ✅ Verified frontend working correctly (ЭкоМаркет Russian e-commerce platform)
+- ✅ Verified backend API running on port 5000
+- ✅ Configured deployment for autoscale (npm run build → npm run start)
+- ✅ Server binding: 0.0.0.0:5000 (accessible via Replit webview)
+- ✅ AllowedHosts configured in Vite for Replit proxy support (server/vite.ts line 26)
+
+**Technical Configuration:**
+- Development server: Combined Express + Vite on port 5000
+- Production build: Vite build + ESBuild server bundling
+- Database: PostgreSQL on Helium (DATABASE_URL configured)
+- WebSocket: Support chat on `/ws` endpoint
+- File uploads: Multer middleware for images and attachments
+- Host configuration: 0.0.0.0:5000 with allowedHosts: true for Replit proxy
+
+**Project Status:**
+- Full-stack e-commerce platform for natural/organic products
+- React + TypeScript frontend with Shadcn UI components
+- Node.js + Express backend with JWT authentication
+- PostgreSQL database with Drizzle ORM
+- Role-based access control (Admin, Marketer, Consultant, Customer)
+- Ready for development and testing
+
 ### Performance Optimization: Database Query Optimization (November 16, 2025)
 
 **Critical Bug Fixes Completed:**
