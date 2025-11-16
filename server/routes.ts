@@ -421,7 +421,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         yukassaPaymentToken: data.yukassaPaymentToken,
         cardLastFour: data.cardLastFour,
         cardType: data.cardType,
-        isDefault: data.isDefault || null,
+        isDefault: data.isDefault ?? false,
       });
       res.json(card);
     } catch (error) {
