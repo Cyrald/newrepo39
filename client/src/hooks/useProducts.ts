@@ -35,6 +35,7 @@ export function useCreateProduct() {
     mutationFn: (data: FormData) => productsApi.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["products"] });
+      queryClient.invalidateQueries({ queryKey: ["adminProducts"] });
     },
   });
 }
@@ -47,6 +48,7 @@ export function useUpdateProduct() {
       productsApi.update(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["products"] });
+      queryClient.invalidateQueries({ queryKey: ["adminProducts"] });
     },
   });
 }
@@ -58,6 +60,7 @@ export function useDeleteProduct() {
     mutationFn: (id: string) => productsApi.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["products"] });
+      queryClient.invalidateQueries({ queryKey: ["adminProducts"] });
     },
   });
 }

@@ -1,7 +1,9 @@
 import { useState } from "react"
 import { Plus, Search, MoreHorizontal, Pencil, Trash2, Eye } from "lucide-react"
 import { useQuery } from "@tanstack/react-query"
+import { useLocation } from "wouter"
 import { AdminLayout } from "@/components/admin-layout"
+import { ProductFormDialog } from "@/components/product-form-dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -18,17 +20,38 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { useToast } from "@/hooks/use-toast"
 import { productsApi } from "@/lib/api"
+import { useDeleteProduct } from "@/hooks/useProducts"
+import type { Product } from "@shared/schema"
 
 export default function AdminProductsPage() {
+  const { toast } = useToast()
+  const [, setLocation] = useLocation()
   const [searchQuery, setSearchQuery] = useState("")
+  const [isFormOpen, setIsFormOpen] = useState(false)
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const [productToDelete, setProductToDelete] = useState<string | null>(null)
 
   const { data, isLoading } = useQuery({
     queryKey: ["adminProducts"],
     queryFn: () => productsApi.getAll({ limit: 10000 }),
   })
+
+  const deleteProduct = useDeleteProduct()
 
   const products = data?.products || []
 
@@ -37,8 +60,44 @@ export default function AdminProductsPage() {
     product.sku?.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
+  const handleAddProduct = () => {
+    setSelectedProduct(null)
+    setIsFormOpen(true)
+  }
+
+  const handleEditProduct = (product: Product) => {
+    setSelectedProduct(product)
+    setIsFormOpen(true)
+  }
+
+  const handleViewProduct = (productId: string) => {
+    setLocation(`/products/${productId}`)
+  }
+
   const handleDeleteProduct = (productId: string) => {
-    console.log("Delete product:", productId)
+    setProductToDelete(productId)
+    setIsDeleteDialogOpen(true)
+  }
+
+  const confirmDelete = async () => {
+    if (!productToDelete) return
+
+    try {
+      await deleteProduct.mutateAsync(productToDelete)
+      toast({
+        title: "Товар удален",
+        description: "Товар успешно удален из каталога",
+      })
+    } catch (error: any) {
+      toast({
+        title: "Ошибка",
+        description: error.message || "Не удалось удалить товар",
+        variant: "destructive",
+      })
+    } finally {
+      setIsDeleteDialogOpen(false)
+      setProductToDelete(null)
+    }
   }
 
   if (isLoading) {
@@ -63,7 +122,7 @@ export default function AdminProductsPage() {
               Управление каталогом товаров
             </p>
           </div>
-          <Button data-testid="button-add-product">
+          <Button onClick={handleAddProduct} data-testid="button-add-product">
             <Plus className="mr-2 h-4 w-4" />
             Добавить товар
           </Button>
@@ -123,8 +182,8 @@ export default function AdminProductsPage() {
                           )}
                         </TableCell>
                         <TableCell>
-                          <Badge variant={product.isPublished ? "default" : "secondary"}>
-                            {product.isPublished ? "Опубликован" : "Черновик"}
+                          <Badge variant={!product.isArchived ? "default" : "secondary"}>
+                            {!product.isArchived ? "Опубликован" : "Архив"}
                           </Badge>
                         </TableCell>
                         <TableCell>
@@ -135,11 +194,11 @@ export default function AdminProductsPage() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleViewProduct(product.id)}>
                                 <Eye className="mr-2 h-4 w-4" />
                                 Просмотр
                               </DropdownMenuItem>
-                              <DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleEditProduct(product)}>
                                 <Pencil className="mr-2 h-4 w-4" />
                                 Редактировать
                               </DropdownMenuItem>
@@ -162,6 +221,31 @@ export default function AdminProductsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Product Form Dialog */}
+      <ProductFormDialog
+        open={isFormOpen}
+        onOpenChange={setIsFormOpen}
+        product={selectedProduct}
+      />
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить товар?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Это действие нельзя отменить. Товар будет архивирован и скрыт из каталога.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete} className="bg-destructive text-destructive-foreground">
+              Удалить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AdminLayout>
   )
 }
