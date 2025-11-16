@@ -38,6 +38,7 @@ export default function CatalogPage() {
   )
   const [priceRange, setPriceRange] = useState([0, 10000])
   const [selectedCategories, setSelectedCategories] = useState<string[]>([])
+  const [currentPage, setCurrentPage] = useState(1)
 
   const { data: categoriesData, isLoading: categoriesLoading } = useCategories()
   const { data: productsData, isLoading: productsLoading } = useProducts({
@@ -45,21 +46,33 @@ export default function CatalogPage() {
     minPrice: priceRange[0],
     maxPrice: priceRange[1],
     sortBy: sortBy,
-    page: 1,
+    page: currentPage,
     limit: 12,
   })
 
   const categories = categoriesData || []
   const products = productsData?.products || []
   const total = productsData?.total || 0
+  const totalPages = productsData?.totalPages || 1
   const isLoading = productsLoading
 
   const handleCategoryToggle = (categoryId: string) => {
+    setCurrentPage(1) // Reset BEFORE changing filter (React batches both updates)
     setSelectedCategories(prev =>
       prev.includes(categoryId)
         ? prev.filter(id => id !== categoryId)
         : [...prev, categoryId]
     )
+  }
+
+  const handlePriceRangeChange = (newRange: number[]) => {
+    setCurrentPage(1) // Reset BEFORE changing filter
+    setPriceRange(newRange)
+  }
+
+  const handleSortChange = (value: string) => {
+    setCurrentPage(1) // Reset BEFORE changing sort
+    setSortBy(value as typeof sortBy)
   }
 
   const FilterContent = () => (
@@ -96,7 +109,7 @@ export default function CatalogPage() {
             max={10000}
             step={100}
             value={priceRange}
-            onValueChange={setPriceRange}
+            onValueChange={handlePriceRangeChange}
             data-testid="slider-price-range"
           />
           <div className="flex items-center justify-between text-sm text-muted-foreground">
@@ -111,6 +124,7 @@ export default function CatalogPage() {
         variant="outline"
         className="w-full"
         onClick={() => {
+          setCurrentPage(1) // Reset BEFORE clearing filters
           setSelectedCategories([])
           setPriceRange([0, 10000])
         }}
@@ -169,7 +183,7 @@ export default function CatalogPage() {
                 </div>
 
                 {/* Sort */}
-                <Select value={sortBy} onValueChange={(value) => setSortBy(value as typeof sortBy)}>
+                <Select value={sortBy} onValueChange={handleSortChange}>
                   <SelectTrigger className="w-[180px]" data-testid="select-sort">
                     <SelectValue placeholder="Сортировка" />
                   </SelectTrigger>
@@ -194,20 +208,75 @@ export default function CatalogPage() {
                   action={{
                     label: "Сбросить фильтры",
                     onClick: () => {
+                      setCurrentPage(1) // Reset BEFORE clearing filters
                       setSelectedCategories([])
                       setPriceRange([0, 10000])
                     },
                   }}
                 />
               ) : (
-                <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-3">
-                  {products.map((product: any) => (
-                    <ProductCard key={product.id} product={product} />
-                  ))}
-                </div>
-              )}
+                <>
+                  <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-3">
+                    {products.map((product: any) => (
+                      <ProductCard key={product.id} product={product} />
+                    ))}
+                  </div>
 
-              {/* Pagination - TODO */}
+                  {/* Pagination */}
+                  {totalPages > 1 && (
+                    <div className="mt-8 flex items-center justify-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                        disabled={currentPage === 1}
+                        data-testid="button-prev-page"
+                      >
+                        Предыдущая
+                      </Button>
+                      
+                      <div className="flex gap-1">
+                        {Array.from({ length: totalPages }, (_, i) => i + 1)
+                          .filter(page => {
+                            if (totalPages <= 7) return true
+                            if (page === 1 || page === totalPages) return true
+                            if (page >= currentPage - 1 && page <= currentPage + 1) return true
+                            return false
+                          })
+                          .map((page, index, array) => {
+                            const prevPage = array[index - 1]
+                            const showEllipsis = prevPage && page - prevPage > 1
+                            
+                            return (
+                              <div key={page} className="flex items-center gap-1">
+                                {showEllipsis && <span className="px-2 text-muted-foreground">...</span>}
+                                <Button
+                                  variant={currentPage === page ? "default" : "outline"}
+                                  size="sm"
+                                  onClick={() => setCurrentPage(page)}
+                                  className="w-10"
+                                  data-testid={`button-page-${page}`}
+                                >
+                                  {page}
+                                </Button>
+                              </div>
+                            )
+                          })}
+                      </div>
+
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                        disabled={currentPage === totalPages}
+                        data-testid="button-next-page"
+                      >
+                        Следующая
+                      </Button>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
         </div>
