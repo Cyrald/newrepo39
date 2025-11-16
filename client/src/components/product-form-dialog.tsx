@@ -194,7 +194,7 @@ export function ProductFormDialog({ open, onOpenChange, product }: ProductFormDi
     const files = Array.from(e.target.files || [])
     if (files.length === 0) return
 
-    const newSelectedImages = [...selectedImages, ...files].slice(0, 5)
+    const newSelectedImages = [...selectedImages, ...files].slice(0, 10)
     setSelectedImages(newSelectedImages)
 
     const newPreviewUrls = newSelectedImages.map((file) => URL.createObjectURL(file))
@@ -225,7 +225,7 @@ export function ProductFormDialog({ open, onOpenChange, product }: ProductFormDi
   }
 
   const totalImagesCount = existingImages.length + selectedImages.length
-  const canAddMore = totalImagesCount < 5
+  const canAddMore = totalImagesCount < 10
 
   const onSubmit = async (data: ProductFormData) => {
     try {
@@ -746,11 +746,11 @@ export function ProductFormDialog({ open, onOpenChange, product }: ProductFormDi
                       <Upload className="h-12 w-12 text-muted-foreground mb-4" />
                       <p className="text-sm text-muted-foreground text-center">
                         {!canAddMore
-                          ? `Максимум 5 изображений (уже ${totalImagesCount})`
-                          : `Добавить изображения (${totalImagesCount}/5)`}
+                          ? `Максимум 10 изображений (уже ${totalImagesCount})`
+                          : `Добавить изображения (${totalImagesCount}/10)`}
                       </p>
                       <p className="text-xs text-muted-foreground/75 mt-2">
-                        PNG, JPG, WEBP до 10MB
+                        PNG, JPG, WEBP до 50MB
                       </p>
                     </label>
                   </div>

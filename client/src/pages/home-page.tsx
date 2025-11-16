@@ -13,6 +13,7 @@ import { CategoryCard } from "@/components/category-card"
 import { useCategories } from "@/hooks/useCategories"
 import { useProducts } from "@/hooks/useProducts"
 import { useWishlist } from "@/hooks/useWishlist"
+import { useAuthStore } from "@/stores/authStore"
 
 export default function HomePage() {
   const { data: categories, isLoading: categoriesLoading } = useCategories()
@@ -21,6 +22,7 @@ export default function HomePage() {
     limit: 6,
   })
   const { data: wishlistItems } = useWishlist()
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated)
 
   const featuredCategories = categories?.slice(0, 3) || []
   
@@ -163,22 +165,24 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* Promotional Banner */}
-        <section className="bg-primary py-12 text-primary-foreground">
-          <div className="container mx-auto px-4 text-center">
-            <h2 className="mb-4 font-serif text-3xl font-semibold">
-              Получите 100 бонусов при регистрации!
-            </h2>
-            <p className="mb-6 text-lg opacity-90">
-              Используйте их для оплаты следующих заказов
-            </p>
-            <Link href="/register">
-              <Button size="lg" variant="secondary" data-testid="button-register-cta">
-                Зарегистрироваться
-              </Button>
-            </Link>
-          </div>
-        </section>
+        {/* Promotional Banner - Only for non-authenticated users */}
+        {!isAuthenticated && (
+          <section className="bg-primary py-12 text-primary-foreground">
+            <div className="container mx-auto px-4 text-center">
+              <h2 className="mb-4 font-serif text-3xl font-semibold">
+                Получите 100 бонусов при регистрации!
+              </h2>
+              <p className="mb-6 text-lg opacity-90">
+                Используйте их для оплаты следующих заказов
+              </p>
+              <Link href="/register">
+                <Button size="lg" variant="secondary" data-testid="button-register-cta">
+                  Зарегистрироваться
+                </Button>
+              </Link>
+            </div>
+          </section>
+        )}
 
         {/* Newsletter */}
         <section className="py-16 md:py-24">
