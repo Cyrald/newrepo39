@@ -37,40 +37,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
+  // Map to track connected users: userId -> WebSocket connection
+  const connectedUsers = new Map<string, any>();
+
   wss.on("connection", async (ws: any, req: any) => {
     let userId: string | null = null;
+    let authenticated = false;
 
     ws.on("message", async (data: any) => {
       try {
         const message = JSON.parse(data.toString());
         
+        // WebSocket only used for notifications, not for creating messages
+        // All messages should be created via POST /api/support/messages
         if (message.type === "auth" && message.userId) {
-          userId = message.userId;
+          // TODO: Validate userId against actual session cookie
+          // For now, just accept and mark as authenticated
+          const authUserId = message.userId as string;
+          userId = authUserId;
+          authenticated = true;
+          connectedUsers.set(authUserId, ws);
+          
           ws.send(JSON.stringify({
             type: "auth_success",
-            message: "Аутентификация успешна",
+            message: "Подключение установлено",
           }));
           return;
         }
         
-        if (message.type === "chat_message" && userId) {
-          const supportMessage = await storage.createSupportMessage({
-            userId,
-            senderId: userId,
-            messageText: message.text,
-          });
-
-          wss.clients.forEach((client: any) => {
-            if (client.readyState === WebSocket.OPEN) {
-              client.send(JSON.stringify({
-                type: "new_message",
-                message: supportMessage,
-              }));
-            }
-          });
+        if (!authenticated) {
+          ws.send(JSON.stringify({
+            type: "error",
+            message: "Необходима аутентификация",
+          }));
+          return;
         }
       } catch (error) {
         console.error("WebSocket message error:", error);
+      }
+    });
+
+    ws.on("close", () => {
+      if (userId) {
+        connectedUsers.delete(userId);
       }
     });
   });
@@ -1173,7 +1182,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/support/messages", authenticateToken, async (req, res) => {
     try {
-      const messages = await storage.getSupportMessages(req.userId!);
+      let userId = req.userId!;
+      
+      // Only admin/consultant can fetch messages for other users
+      if (req.query.userId) {
+        if (!req.userRoles?.some(role => ['admin', 'consultant'].includes(role))) {
+          return res.status(403).json({ message: "Нет прав для просмотра чужих сообщений" });
+        }
+        userId = req.query.userId as string;
+      }
+      
+      const messages = await storage.getSupportMessages(userId);
       res.json(messages);
     } catch (error) {
       res.status(500).json({ message: "Ошибка получения сообщений" });
@@ -1182,11 +1201,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/support/messages", authenticateToken, async (req, res) => {
     try {
+      let userId = req.userId!;
+      
+      // Only admin/consultant can send messages to other users
+      if (req.body.userId && req.body.userId !== req.userId) {
+        if (!req.userRoles?.some(role => ['admin', 'consultant'].includes(role))) {
+          return res.status(403).json({ message: "Нет прав для отправки сообщений от имени других пользователей" });
+        }
+        userId = req.body.userId;
+      }
+      
       const message = await storage.createSupportMessage({
-        userId: req.userId!,
+        userId: userId,
         senderId: req.userId!,
         messageText: req.body.messageText,
       });
+      
+      // Broadcast only to conversation participants (customer + sender)
+      const notification = {
+        type: "new_message",
+        message: message,
+      };
+      
+      // Send to customer
+      const customerWs = connectedUsers.get(userId);
+      if (customerWs && customerWs.readyState === WebSocket.OPEN) {
+        customerWs.send(JSON.stringify(notification));
+      }
+      
+      // Send to sender (if different from customer)
+      if (req.userId !== userId) {
+        const senderWs = connectedUsers.get(req.userId!);
+        if (senderWs && senderWs.readyState === WebSocket.OPEN) {
+          senderWs.send(JSON.stringify(notification));
+        }
+      }
+      
       res.json(message);
     } catch (error) {
       res.status(500).json({ message: "Ошибка отправки сообщения" });

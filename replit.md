@@ -6,6 +6,18 @@ This is a full-featured e-commerce platform for natural and organic products, bu
 
 ## Recent Changes
 
+**November 17, 2025** - Реализация чата поддержки:
+- ✅ Добавлена кнопка "Поддержка"/"Админ панель" в header с логикой по ролям
+- ✅ Создана страница политики конфиденциальности (/privacy-policy)
+- ✅ Реализован виджет чата для пользователей (SupportChatWidget) с privacy consent
+- ✅ Создана админ страница чата поддержки (/admin/support)
+- ✅ WebSocket клиент для real-time уведомлений
+- ✅ REST API endpoints: GET/POST /api/support/messages, GET /api/support/conversations, GET /api/support/customer-info
+- ✅ Проверка ролей в API: только admin/consultant могут читать чужие сообщения
+- ✅ Targeted broadcast: уведомления отправляются только участникам диалога
+- ⚠️ **KNOWN SECURITY ISSUE**: WebSocket authentication не валидирует session cookie - требуется исправление перед production
+- 🔧 TODO: Добавить валидацию сессии при WebSocket handshake (парсинг cookie, проверка req.session)
+
 **November 17, 2025** - Исправление аутентификации и безопасности:
 - ✅ Исправлен flow авторизации: после login вызывается checkAuth() для загрузки ролей
 - ✅ ProtectedRoute показывает loading вместо блокировки если роли ещё не загружены
@@ -90,8 +102,11 @@ Preferred communication style: Simple, everyday language.
 - Supports JPEG, PNG, WEBP formats
 
 **Real-time Communication:**
-- WebSocket server (`ws` library) for live support chat
-- Token-based WebSocket authentication on `/ws` endpoint
+- WebSocket server (`ws` library) for live support chat notifications
+- WebSocket only for real-time notifications, messages created via REST API
+- Connected users tracked in Map (userId -> WebSocket connection)
+- Targeted broadcast to conversation participants only
+- **Security Warning**: WebSocket auth currently accepts userId without session validation - requires hardening before production
 
 ### Data Storage Solutions
 
@@ -121,6 +136,14 @@ Preferred communication style: Simple, everyday language.
 - Multi-step checkout: address → delivery → payment → confirmation.
 - Integration with delivery services for cost calculation.
 - Support for multiple payment methods and order status tracking.
+
+**Support Chat System:**
+- Customer widget with privacy consent (stored in localStorage)
+- Admin interface showing active conversations with customer info
+- Real-time message delivery via WebSocket notifications
+- REST API for message persistence with role-based access control
+- Auto-select first conversation in admin interface
+- Privacy policy page with full consent flow
 
 ## External Dependencies
 

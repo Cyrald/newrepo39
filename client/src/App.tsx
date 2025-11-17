@@ -18,12 +18,14 @@ import VerifyEmailPage from "@/pages/verify-email-page";
 import ProfilePage from "@/pages/profile-page";
 import WishlistPage from "@/pages/wishlist-page";
 import ComparisonPage from "@/pages/comparison-page";
+import PrivacyPolicyPage from "@/pages/privacy-policy-page";
 import AdminDashboardPage from "@/pages/admin/dashboard-page";
 import AdminUsersPage from "@/pages/admin/users-page";
 import AdminProductsPage from "@/pages/admin/products-page";
 import AdminCategoriesPage from "@/pages/admin/categories-page";
 import AdminPromocodesPage from "@/pages/admin/promocodes-page";
 import AdminOrdersPage from "@/pages/admin/orders-page";
+import AdminSupportChatPage from "@/pages/admin/support-chat-page";
 
 function Router() {
   return (
@@ -34,6 +36,7 @@ function Router() {
       <Route path="/login" component={LoginPage} />
       <Route path="/register" component={RegisterPage} />
       <Route path="/verify-email" component={VerifyEmailPage} />
+      <Route path="/privacy-policy" component={PrivacyPolicyPage} />
       
       {/* Protected Routes - require authentication */}
       <Route path="/cart">
@@ -96,6 +99,11 @@ function Router() {
       <Route path="/admin/orders">
         <ProtectedRoute roles={["admin", "consultant"]}>
           <AdminOrdersPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/admin/support">
+        <ProtectedRoute roles={["admin", "consultant"]}>
+          <AdminSupportChatPage />
         </ProtectedRoute>
       </Route>
       
