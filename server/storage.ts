@@ -138,6 +138,7 @@ export interface IStorage {
   
   getSupportMessageAttachments(messageId: string): Promise<SupportMessageAttachment[]>;
   addSupportMessageAttachment(attachment: InsertSupportMessageAttachment): Promise<SupportMessageAttachment>;
+  deleteSupportMessageAttachment(id: string): Promise<void>;
   
   getOrCreateConversation(userId: string): Promise<SupportConversation>;
   archiveConversation(userId: string): Promise<void>;
@@ -802,6 +803,10 @@ export class DatabaseStorage implements IStorage {
   async addSupportMessageAttachment(attachment: InsertSupportMessageAttachment): Promise<SupportMessageAttachment> {
     const [messageAttachment] = await db.insert(supportMessageAttachments).values(attachment).returning();
     return messageAttachment;
+  }
+
+  async deleteSupportMessageAttachment(id: string): Promise<void> {
+    await db.delete(supportMessageAttachments).where(eq(supportMessageAttachments.id, id));
   }
 
   async getOrCreateConversation(userId: string): Promise<SupportConversation> {

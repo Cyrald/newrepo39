@@ -1,0 +1,251 @@
+import sharp from "sharp";
+import path from "path";
+import fs from "fs/promises";
+import { randomUUID } from "crypto";
+
+export interface ImagePipelineConfig {
+  maxWidth: number;
+  maxHeight: number;
+  quality: number;
+  format: 'jpeg' | 'png' | 'webp';
+  maxFileSize: number;
+}
+
+export interface ProcessedImageResult {
+  filename: string;
+  url: string;
+  width: number;
+  height: number;
+  size: number;
+  mimeType: string;
+}
+
+interface TempFile {
+  path: string;
+  cleanup: () => Promise<void>;
+}
+
+const DEFAULT_CONFIG: ImagePipelineConfig = {
+  maxWidth: 1200,
+  maxHeight: 1200,
+  quality: 85,
+  format: 'webp',
+  maxFileSize: 50 * 1024 * 1024,
+};
+
+export class ImagePipeline {
+  private uploadsDir: string;
+  private tempDir: string;
+  private urlPrefix: string;
+  private config: ImagePipelineConfig;
+  private tempFiles: Set<string> = new Set();
+
+  constructor(uploadsDir: string, urlPrefix: string, config: Partial<ImagePipelineConfig> = {}) {
+    this.uploadsDir = uploadsDir;
+    this.tempDir = path.join(uploadsDir, '.temp');
+    this.urlPrefix = urlPrefix;
+    this.config = { ...DEFAULT_CONFIG, ...config };
+  }
+
+  async initialize(): Promise<void> {
+    await fs.mkdir(this.uploadsDir, { recursive: true });
+    await fs.mkdir(this.tempDir, { recursive: true });
+  }
+
+  private async createTempFile(buffer: Buffer, originalName: string): Promise<TempFile> {
+    const ext = path.extname(originalName);
+    const tempPath = path.join(this.tempDir, `${randomUUID()}${ext}`);
+    
+    await fs.writeFile(tempPath, buffer);
+    this.tempFiles.add(tempPath);
+
+    return {
+      path: tempPath,
+      cleanup: async () => {
+        try {
+          await fs.unlink(tempPath);
+          this.tempFiles.delete(tempPath);
+        } catch (error: any) {
+          if (error.code !== 'ENOENT') {
+            console.warn(`Failed to cleanup temp file ${tempPath}:`, error);
+          }
+        }
+      }
+    };
+  }
+
+  private async validateImage(buffer: Buffer): Promise<void> {
+    if (buffer.length > this.config.maxFileSize) {
+      throw new Error(`Размер файла превышает ${this.config.maxFileSize / 1024 / 1024} МБ`);
+    }
+
+    let metadata;
+    try {
+      metadata = await sharp(buffer).metadata();
+    } catch {
+      throw new Error('Файл не является корректным изображением');
+    }
+
+    if (!metadata.format) {
+      throw new Error('Не удалось определить формат изображения');
+    }
+
+    const allowedFormats = ['jpeg', 'jpg', 'png', 'webp'];
+    if (!allowedFormats.includes(metadata.format)) {
+      throw new Error(`Неподдерживаемый формат: ${metadata.format}. Допустимы: JPEG, PNG, WEBP`);
+    }
+
+    if (metadata.width && metadata.width > 10000) {
+      throw new Error('Изображение слишком широкое (максимум 10000px)');
+    }
+
+    if (metadata.height && metadata.height > 10000) {
+      throw new Error('Изображение слишком высокое (максимум 10000px)');
+    }
+  }
+
+  async processImage(
+    buffer: Buffer,
+    originalName: string
+  ): Promise<ProcessedImageResult> {
+    await this.initialize();
+    
+    const tempFile = await this.createTempFile(buffer, originalName);
+    let tempOutputPath: string | null = null;
+
+    try {
+      await this.validateImage(buffer);
+
+      const uniqueFilename = `${Date.now()}-${randomUUID()}.${this.config.format}`;
+      const finalPath = path.join(this.uploadsDir, uniqueFilename);
+      tempOutputPath = path.join(this.tempDir, `out-${uniqueFilename}`);
+      
+      this.tempFiles.add(tempOutputPath);
+
+      const image = sharp(buffer);
+      const metadata = await image.metadata();
+
+      let processedImage = image;
+
+      if (metadata.width && metadata.height) {
+        if (metadata.width > this.config.maxWidth || metadata.height > this.config.maxHeight) {
+          processedImage = processedImage.resize(this.config.maxWidth, this.config.maxHeight, {
+            fit: 'inside',
+            withoutEnlargement: true,
+          });
+        }
+      }
+
+      processedImage = processedImage[this.config.format]({ quality: this.config.quality });
+
+      const info = await processedImage.toFile(tempOutputPath);
+
+      await fs.rename(tempOutputPath, finalPath);
+      this.tempFiles.delete(tempOutputPath);
+      tempOutputPath = null;
+
+      await tempFile.cleanup();
+
+      return {
+        filename: uniqueFilename,
+        url: `${this.urlPrefix}/${uniqueFilename}`,
+        width: info.width,
+        height: info.height,
+        size: info.size,
+        mimeType: `image/${this.config.format}`,
+      };
+    } catch (error) {
+      await tempFile.cleanup();
+      
+      if (tempOutputPath && this.tempFiles.has(tempOutputPath)) {
+        try {
+          await fs.unlink(tempOutputPath);
+          this.tempFiles.delete(tempOutputPath);
+        } catch {}
+      }
+
+      throw error;
+    }
+  }
+
+  async processBatch(
+    files: Array<{ buffer: Buffer; originalname: string }>
+  ): Promise<ProcessedImageResult[]> {
+    const results: ProcessedImageResult[] = [];
+    const processedFiles: string[] = [];
+
+    try {
+      for (const file of files) {
+        const result = await this.processImage(file.buffer, file.originalname);
+        results.push(result);
+        processedFiles.push(path.join(this.uploadsDir, result.filename));
+      }
+
+      return results;
+    } catch (error) {
+      for (const filePath of processedFiles) {
+        try {
+          await fs.unlink(filePath);
+        } catch (unlinkError) {
+          console.warn(`Failed to rollback file ${filePath}:`, unlinkError);
+        }
+      }
+
+      throw error;
+    }
+  }
+
+  async deleteImage(filename: string): Promise<void> {
+    const filePath = path.join(this.uploadsDir, filename);
+    
+    try {
+      await fs.unlink(filePath);
+    } catch (error: any) {
+      if (error.code !== 'ENOENT') {
+        throw new Error('Не удалось удалить изображение');
+      }
+    }
+  }
+
+  async cleanup(): Promise<void> {
+    const tempFilesArray = Array.from(this.tempFiles);
+    
+    await Promise.allSettled(
+      tempFilesArray.map(async (tempPath) => {
+        try {
+          await fs.unlink(tempPath);
+          this.tempFiles.delete(tempPath);
+        } catch (error: any) {
+          if (error.code !== 'ENOENT') {
+            console.warn(`Failed to cleanup temp file ${tempPath}:`, error);
+          }
+        }
+      })
+    );
+  }
+}
+
+const productImagePipeline = new ImagePipeline(
+  path.join(process.cwd(), 'uploads', 'products'),
+  '/uploads/products',
+  {
+    maxWidth: 1200,
+    maxHeight: 1200,
+    quality: 85,
+    format: 'webp',
+  }
+);
+
+const chatImagePipeline = new ImagePipeline(
+  path.join(process.cwd(), 'uploads', 'chat'),
+  '/uploads/chat',
+  {
+    maxWidth: 800,
+    maxHeight: 800,
+    quality: 80,
+    format: 'webp',
+  }
+);
+
+
+export { productImagePipeline, chatImagePipeline };

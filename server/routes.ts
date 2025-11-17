@@ -15,9 +15,8 @@ import {
 import {
   productImagesUpload,
   chatAttachmentsUpload,
-  validateTotalFileSize,
 } from "./upload";
-import { processProductImage, processChatImage, deleteProductImage } from "./imageService";
+import { productImagePipeline, chatImagePipeline } from "./ImagePipeline";
 import { calculateCashback, canUseBonuses } from "./bonuses";
 import { validatePromocode, applyPromocode } from "./promocodes";
 import {
@@ -627,7 +626,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const product = await storage.updateProduct(req.params.id, req.body);
         res.json(product);
-      } catch (error) {
+      } catch (error: any) {
+        console.error('Error updating product:', error);
         res.status(500).json({ message: "Ошибка обновления товара" });
       }
     }
@@ -653,8 +653,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     requireRole("admin", "marketer"),
     productImagesUpload.array("images", 10),
     async (req, res) => {
-      const uploadedFiles: string[] = [];
-      
       try {
         const files = req.files as Express.Multer.File[];
         
@@ -662,32 +660,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(400).json({ message: "Файлы не загружены" });
         }
         
-        const images = [];
-
-        for (const file of files) {
-          uploadedFiles.push(file.path);
+        const processedImages = await productImagePipeline.processBatch(files);
+        
+        const dbImages = [];
+        const createdImageIds: string[] = [];
+        
+        try {
+          for (const processedImage of processedImages) {
+            const image = await storage.addProductImage({
+              productId: req.params.id,
+              url: processedImage.url,
+              sortOrder: 0,
+            });
+            dbImages.push(image);
+            createdImageIds.push(image.id);
+          }
           
-          const processedImage = await processProductImage(file.path);
-            
-          const image = await storage.addProductImage({
-            productId: req.params.id,
-            url: processedImage.url,
-            sortOrder: 0,
-          });
-          images.push(image);
+          res.json(dbImages);
+        } catch (dbError: any) {
+          for (const imageId of createdImageIds) {
+            try {
+              await storage.deleteProductImage(imageId);
+            } catch (deleteError) {
+              console.warn(`Failed to rollback DB image ${imageId}:`, deleteError);
+            }
+          }
+          
+          for (const processedImage of processedImages) {
+            try {
+              await productImagePipeline.deleteImage(processedImage.filename);
+            } catch (deleteError) {
+              console.warn(`Failed to rollback file ${processedImage.filename}:`, deleteError);
+            }
+          }
+          
+          throw dbError;
         }
-
-        res.json(images);
       } catch (error: any) {
         console.error('Error uploading images:', error);
-        
-        for (const filePath of uploadedFiles) {
-          try {
-            const fs = require('fs/promises');
-            await fs.unlink(filePath);
-          } catch {}
-        }
-        
         res.status(500).json({ message: error.message || "Ошибка загрузки изображений" });
       }
     }
@@ -1292,25 +1302,59 @@ export async function registerRoutes(app: Express): Promise<Server> {
     "/api/support/messages/:id/attachments",
     authenticateToken,
     chatAttachmentsUpload.array("files", 5),
-    validateTotalFileSize(50 * 1024 * 1024),
     async (req, res) => {
       try {
         const files = req.files as Express.Multer.File[];
-        const attachments = [];
-
-        for (const file of files) {
-          const attachment = await storage.addSupportMessageAttachment({
-            messageId: req.params.id,
-            fileUrl: `/uploads/chat/${file.filename}`,
-            fileSize: file.size,
-            fileType: file.mimetype,
-          });
-          attachments.push(attachment);
+        
+        if (!files || files.length === 0) {
+          return res.status(400).json({ message: "Файлы не загружены" });
         }
 
-        res.json(attachments);
-      } catch (error) {
-        res.status(500).json({ message: "Ошибка загрузки вложений" });
+        const totalSize = files.reduce((sum, file) => sum + file.buffer.length, 0);
+        if (totalSize > 50 * 1024 * 1024) {
+          return res.status(400).json({ message: "Общий размер файлов превышает 50 МБ" });
+        }
+
+        const processedImages = await chatImagePipeline.processBatch(files);
+        
+        const attachments = [];
+        const createdAttachmentIds: string[] = [];
+        
+        try {
+          for (const processedImage of processedImages) {
+            const attachment = await storage.addSupportMessageAttachment({
+              messageId: req.params.id,
+              fileUrl: processedImage.url,
+              fileSize: processedImage.size,
+              fileType: processedImage.mimeType,
+            });
+            attachments.push(attachment);
+            createdAttachmentIds.push(attachment.id);
+          }
+          
+          res.json(attachments);
+        } catch (dbError: any) {
+          for (const attachmentId of createdAttachmentIds) {
+            try {
+              await storage.deleteSupportMessageAttachment(attachmentId);
+            } catch (deleteError) {
+              console.warn(`Failed to rollback DB attachment ${attachmentId}:`, deleteError);
+            }
+          }
+          
+          for (const processedImage of processedImages) {
+            try {
+              await chatImagePipeline.deleteImage(processedImage.filename);
+            } catch (deleteError) {
+              console.warn(`Failed to rollback file ${processedImage.filename}:`, deleteError);
+            }
+          }
+          
+          throw dbError;
+        }
+      } catch (error: any) {
+        console.error('Error uploading attachments:', error);
+        res.status(500).json({ message: error.message || "Ошибка загрузки вложений" });
       }
     }
   );

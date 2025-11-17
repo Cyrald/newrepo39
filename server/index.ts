@@ -49,7 +49,10 @@ app.use(express.json({
   verify: (req, _res, buf) => {
     req.rawBody = buf;
   },
-  type: 'application/json' // Явно указываем тип
+  type: (req) => {
+    const contentType = req.headers['content-type'] || '';
+    return contentType.includes('application/json');
+  }
 }));
 
 // URL-encoded parser - только для application/x-www-form-urlencoded
