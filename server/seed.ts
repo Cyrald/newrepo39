@@ -574,16 +574,7 @@ async function seed() {
 
     const createdProducts = await db.insert(products).values(productData).returning();
     console.log(`✓ Создано ${createdProducts.length} товаров`);
-
-    console.log("🖼️ Добавляем изображения для товаров...");
-    const imageData = createdProducts.map(product => ({
-      productId: product.id,
-      url: "/placeholder-product.svg",
-      sortOrder: 0,
-    }));
-
-    await db.insert(productImages).values(imageData);
-    console.log(`✓ Добавлено ${imageData.length} изображений`);
+    console.log("ℹ️  Товары созданы без изображений. Добавьте фото через админ панель.");
   } else {
     console.log("✓ Категории и товары уже существуют");
   }
@@ -593,7 +584,6 @@ async function seed() {
   console.log("   - Пользователей: 4 (admin + user1, user2, user3)");
   console.log("   - Категорий: 5");
   console.log("   - Товаров: 30");
-  console.log("   - Изображений: 30");
 }
 
 seed()

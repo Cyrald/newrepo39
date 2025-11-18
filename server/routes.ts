@@ -15,6 +15,7 @@ import {
 import {
   productImagesUpload,
   chatAttachmentsUpload,
+  productFormDataUpload,
 } from "./upload";
 import { productImagePipeline, chatImagePipeline } from "./ImagePipeline";
 import { calculateCashback, canUseBonuses } from "./bonuses";
@@ -608,9 +609,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
     "/api/products",
     authenticateToken,
     requireRole("admin", "marketer"),
+    productFormDataUpload.none(),
     async (req, res) => {
       try {
-        const product = await storage.createProduct(req.body);
+        const productData = { ...req.body };
+        
+        const stockQty = (productData.stockQuantity || '0').trim();
+        if (!/^\d+$/.test(stockQty)) {
+          return res.status(400).json({ message: "Некорректное количество на складе" });
+        }
+        productData.stockQuantity = parseInt(stockQty, 10);
+        
+        if (productData.shelfLifeDays && productData.shelfLifeDays !== '') {
+          const daysStr = productData.shelfLifeDays.trim();
+          if (/^\d+$/.test(daysStr)) {
+            productData.shelfLifeDays = parseInt(daysStr, 10);
+          } else {
+            productData.shelfLifeDays = null;
+          }
+        } else {
+          productData.shelfLifeDays = null;
+        }
+        
+        if (productData.isNew !== undefined) productData.isNew = productData.isNew === 'true';
+        if (productData.isArchived !== undefined) productData.isArchived = productData.isArchived === 'true';
+        
+        if (productData.discountStartDate && productData.discountStartDate !== '') {
+          productData.discountStartDate = new Date(productData.discountStartDate);
+        } else {
+          productData.discountStartDate = null;
+        }
+        if (productData.discountEndDate && productData.discountEndDate !== '') {
+          productData.discountEndDate = new Date(productData.discountEndDate);
+        } else {
+          productData.discountEndDate = null;
+        }
+        
+        const product = await storage.createProduct(productData);
         res.json(product);
       } catch (error) {
         res.status(500).json({ message: "Ошибка создания товара" });
@@ -624,7 +659,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     requireRole("admin", "marketer"),
     async (req, res) => {
       try {
-        const product = await storage.updateProduct(req.params.id, req.body);
+        const productData = { ...req.body };
+        
+        if (productData.discountStartDate && typeof productData.discountStartDate === 'string') {
+          productData.discountStartDate = productData.discountStartDate ? new Date(productData.discountStartDate) : null;
+        }
+        if (productData.discountEndDate && typeof productData.discountEndDate === 'string') {
+          productData.discountEndDate = productData.discountEndDate ? new Date(productData.discountEndDate) : null;
+        }
+        
+        const product = await storage.updateProduct(req.params.id, productData);
         res.json(product);
       } catch (error: any) {
         console.error('Error updating product:', error);

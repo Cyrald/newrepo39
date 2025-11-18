@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
-import { Upload, X, Image as ImageIcon } from "lucide-react"
+import { Upload, X, Image as ImageIcon, FileCheck } from "lucide-react"
 import { useQueryClient } from "@tanstack/react-query"
 import {
   Dialog,
@@ -87,6 +87,7 @@ export function ProductFormDialog({ open, onOpenChange, product }: ProductFormDi
   const [selectedImages, setSelectedImages] = useState<File[]>([])
   const [previewUrls, setPreviewUrls] = useState<string[]>([])
   const [existingImages, setExistingImages] = useState<any[]>([])
+  const [isSaved, setIsSaved] = useState(false)
 
   const isEditMode = !!product
 
@@ -372,6 +373,9 @@ export function ProductFormDialog({ open, onOpenChange, product }: ProductFormDi
           title: "Товар обновлен",
           description: "Изменения успешно сохранены",
         })
+        
+        setIsSaved(true)
+        setTimeout(() => setIsSaved(false), 2000)
       } else {
         await createProduct.mutateAsync(formData)
         
@@ -379,12 +383,13 @@ export function ProductFormDialog({ open, onOpenChange, product }: ProductFormDi
           title: "Товар создан",
           description: "Новый товар добавлен в каталог",
         })
+        
+        setIsSaved(true)
+        setTimeout(() => setIsSaved(false), 2000)
       }
 
-      onOpenChange(false)
       setSelectedImages([])
       setPreviewUrls([])
-      form.reset()
     } catch (error: any) {
       toast({
         title: "Ошибка",
@@ -786,7 +791,7 @@ export function ProductFormDialog({ open, onOpenChange, product }: ProductFormDi
                   {isEditMode && existingImages.length > 0 && (
                     <div>
                       <h4 className="text-sm font-semibold mb-3">Текущие изображения ({existingImages.length})</h4>
-                      <div className="grid grid-cols-3 gap-4">
+                      <div className="grid grid-cols-5 gap-3">
                         {existingImages.map((image: any, index: number) => (
                           <div 
                             key={image.id} 
@@ -834,7 +839,7 @@ export function ProductFormDialog({ open, onOpenChange, product }: ProductFormDi
                   )}
 
                   <div 
-                    className="border-2 border-dashed border-muted-foreground/25 rounded-lg hover:border-muted-foreground/50 transition-colors aspect-[3/4] max-w-xs mx-auto"
+                    className="border-2 border-dashed border-muted-foreground/25 rounded-lg hover:border-muted-foreground/50 transition-colors w-full min-h-[200px]"
                     onDrop={handleDrop}
                     onDragOver={handleDragOver}
                   >
@@ -868,7 +873,7 @@ export function ProductFormDialog({ open, onOpenChange, product }: ProductFormDi
                   {selectedImages.length > 0 && (
                     <div>
                       <h4 className="text-sm font-semibold mb-3">Новые изображения ({selectedImages.length})</h4>
-                      <div className="grid grid-cols-3 gap-4">
+                      <div className="grid grid-cols-5 gap-3">
                         {previewUrls.map((url, index) => (
                           <div 
                             key={index} 
@@ -924,13 +929,20 @@ export function ProductFormDialog({ open, onOpenChange, product }: ProductFormDi
               </Button>
               <Button
                 type="submit"
-                disabled={createProduct.isPending || updateProduct.isPending}
+                disabled={createProduct.isPending || updateProduct.isPending || isSaved}
               >
-                {createProduct.isPending || updateProduct.isPending
-                  ? "Сохранение..."
-                  : isEditMode
-                  ? "Сохранить"
-                  : "Создать"}
+                {isSaved ? (
+                  <>
+                    <FileCheck className="h-4 w-4 mr-2" />
+                    Сохранено
+                  </>
+                ) : createProduct.isPending || updateProduct.isPending ? (
+                  "Сохранение..."
+                ) : isEditMode ? (
+                  "Сохранить"
+                ) : (
+                  "Создать"
+                )}
               </Button>
             </DialogFooter>
           </form>
