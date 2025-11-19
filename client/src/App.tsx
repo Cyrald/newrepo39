@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { Switch, Route } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -6,26 +7,38 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/providers/theme-provider";
 import { AuthProvider } from "@/providers/auth-provider";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
-import NotFound from "@/pages/not-found";
-import HomePage from "@/pages/home-page";
-import CatalogPage from "@/pages/catalog-page";
-import ProductDetailPage from "@/pages/product-detail-page";
-import CartPage from "@/pages/cart-page";
-import CheckoutPage from "@/pages/checkout-page";
-import LoginPage from "@/pages/login-page";
-import RegisterPage from "@/pages/register-page";
-import VerifyEmailPage from "@/pages/verify-email-page";
-import ProfilePage from "@/pages/profile-page";
-import WishlistPage from "@/pages/wishlist-page";
-import ComparisonPage from "@/pages/comparison-page";
-import PrivacyPolicyPage from "@/pages/privacy-policy-page";
-import AdminDashboardPage from "@/pages/admin/dashboard-page";
-import AdminUsersPage from "@/pages/admin/users-page";
-import AdminProductsPage from "@/pages/admin/products-page";
-import AdminCategoriesPage from "@/pages/admin/categories-page";
-import AdminPromocodesPage from "@/pages/admin/promocodes-page";
-import AdminOrdersPage from "@/pages/admin/orders-page";
-import AdminSupportChatPage from "@/pages/admin/support-chat-page";
+
+const NotFound = lazy(() => import("@/pages/not-found"));
+const HomePage = lazy(() => import("@/pages/home-page"));
+const CatalogPage = lazy(() => import("@/pages/catalog-page"));
+const ProductDetailPage = lazy(() => import("@/pages/product-detail-page"));
+const CartPage = lazy(() => import("@/pages/cart-page"));
+const CheckoutPage = lazy(() => import("@/pages/checkout-page"));
+const LoginPage = lazy(() => import("@/pages/login-page"));
+const RegisterPage = lazy(() => import("@/pages/register-page"));
+const VerifyEmailPage = lazy(() => import("@/pages/verify-email-page"));
+const ProfilePage = lazy(() => import("@/pages/profile-page"));
+const WishlistPage = lazy(() => import("@/pages/wishlist-page"));
+const ComparisonPage = lazy(() => import("@/pages/comparison-page"));
+const PrivacyPolicyPage = lazy(() => import("@/pages/privacy-policy-page"));
+const AdminDashboardPage = lazy(() => import("@/pages/admin/dashboard-page"));
+const AdminUsersPage = lazy(() => import("@/pages/admin/users-page"));
+const AdminProductsPage = lazy(() => import("@/pages/admin/products-page"));
+const AdminCategoriesPage = lazy(() => import("@/pages/admin/categories-page"));
+const AdminPromocodesPage = lazy(() => import("@/pages/admin/promocodes-page"));
+const AdminOrdersPage = lazy(() => import("@/pages/admin/orders-page"));
+const AdminSupportChatPage = lazy(() => import("@/pages/admin/support-chat-page"));
+
+function PageLoadingFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+        <p className="mt-4 text-muted-foreground">Загрузка...</p>
+      </div>
+    </div>
+  );
+}
 
 function Router() {
   return (
@@ -120,7 +133,9 @@ function App() {
         <AuthProvider>
           <TooltipProvider>
             <Toaster />
-            <Router />
+            <Suspense fallback={<PageLoadingFallback />}>
+              <Router />
+            </Suspense>
           </TooltipProvider>
         </AuthProvider>
       </ThemeProvider>
