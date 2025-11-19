@@ -6,6 +6,18 @@ This is a full-featured e-commerce platform for natural and organic products, bu
 
 ## Recent Changes
 
+**November 19, 2025** - Fresh GitHub Clone Setup and Database Population:
+- ✅ Установлены все npm зависимости (623 пакета)
+- ✅ Подключена PostgreSQL база данных (Helium)
+- ✅ Синхронизирована схема БД через Drizzle ORM (db:push)
+- ✅ Переработан seed.ts: создаётся 150 товаров (по 30 на каждую из 5 категорий)
+- ✅ Успешно заполнена база данных (4 пользователя, 5 категорий, 150 товаров)
+- ✅ Настроен workflow dev-server на порту 5000 с webview
+- ✅ Добавлена критичная настройка allowedHosts: true в vite.config.ts для работы Replit-прокси
+- ✅ Настроен deployment config для autoscale с production build
+- ✅ Приложение полностью функционально - API отвечает, товары загружаются
+- 📦 Проект готов к разработке и деплою
+
 **November 17, 2025** - GitHub Import Successfully Configured for Replit:
 - ✅ Installed all npm dependencies (623 packages)
 - ✅ Connected to PostgreSQL database (Helium)
