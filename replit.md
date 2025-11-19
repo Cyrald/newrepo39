@@ -2,108 +2,7 @@
 
 ## Overview
 
-This is a full-featured e-commerce platform for natural and organic products, built as a React SPA with a Node.js/Express backend. It provides an online shopping experience for customers and comprehensive admin tools for product, order, and customer management. The platform supports a role-based access control system (administrators, marketers, consultants, customers) and integrates with third-party services for payments, delivery, and email verification.
-
-## Recent Changes
-
-**November 19, 2025** - Intelligent Prefetching System Implementation:
-- ✅ Реализована умная система предзагрузки страниц (intelligent prefetching)
-- ✅ React.lazy() для всех 18 страниц - первая загрузка быстрее в 5-7 раз
-- ✅ Адаптивная стратегия prefetch в зависимости от статуса авторизации:
-  - Неавторизованные: login/register грузятся с приоритетом 1
-  - Авторизованные: cart/wishlist/profile грузятся с приоритетом 1
-  - Staff роли: админ панель грузится с приоритетом 4
-- ✅ Предсказательная подгрузка через returnUrl параметр на login/register
-- ✅ Автоматическая догрузка защищенных страниц после авторизации
-- ✅ Проверка качества интернета (не грузим на медленных соединениях)
-- ✅ requestIdleCallback для использования свободного времени браузера
-- 🚀 Результат: переходы между страницами практически мгновенные (~100мс)
-
-**November 19, 2025** - Fresh GitHub Clone Setup and Database Population:
-- ✅ Установлены все npm зависимости (623 пакета)
-- ✅ Подключена PostgreSQL база данных (Helium)
-- ✅ Синхронизирована схема БД через Drizzle ORM (db:push)
-- ✅ Переработан seed.ts: создаётся 150 товаров (по 30 на каждую из 5 категорий)
-- ✅ Успешно заполнена база данных (4 пользователя, 5 категорий, 150 товаров)
-- ✅ Настроен workflow dev-server на порту 5000 с webview
-- ✅ Добавлена критичная настройка allowedHosts: true в vite.config.ts для работы Replit-прокси
-- ✅ Настроен deployment config для autoscale с production build
-- ✅ Приложение полностью функционально - API отвечает, товары загружаются
-- 📦 Проект готов к разработке и деплою
-
-**November 17, 2025** - GitHub Import Successfully Configured for Replit:
-- ✅ Installed all npm dependencies (623 packages)
-- ✅ Connected to PostgreSQL database (Helium)
-- ✅ Pushed database schema successfully using Drizzle ORM
-- ✅ Configured dev-server workflow on port 5000 with webview output
-- ✅ Verified Vite configuration allows all hosts (required for Replit proxy)
-- ✅ Configured deployment for autoscale with production build
-- ✅ Application fully functional - homepage loads correctly with "ЭкоМаркет" branding
-- ✅ Frontend running on 0.0.0.0:5000, backend integrated with Express
-- 📦 Project ready for development and deployment
-
-**November 17, 2025** - UI/UX улучшения и рефакторинг бизнес-логики:
-- ✅ Header: сотрудники (admin/marketer/consultant) видят кнопку "Админ панель" вместо "Поддержка"
-- ✅ Виджет чата: модальное окно consent по центру экрана, затем чат в правом нижнем углу как messenger
-- ✅ Виджет чата: поддержка неаутентифицированных пользователей (показ формы входа при попытке начать чат)
-- ✅ Overlay модального окна больше не закрывает consent (предотвращение случайного закрытия)
-- ✅ Админ панель чата: восстановлена боковая панель AdminLayout с навигацией
-- ✅ Промокоды: удалено поле maxOrderAmount, добавлено maxDiscountAmount
-- ✅ Промокоды: скидка применяется только к товарам (subtotal), не к стоимости доставки
-- ✅ Карточки товаров: название ограничено 2 строками (line-clamp-2)
-- ✅ Badge корзины: абсолютное позиционирование, показ "99+" при количестве >99
-- ✅ Админ панель: "Dashboard" переименован в "Главная"
-- ✅ Таблица пользователей: показывается "Номер телефона" вместо "Статус"
-
-**November 17, 2025** - Реализация чата поддержки:
-- ✅ Добавлена кнопка "Поддержка"/"Админ панель" в header с логикой по ролям
-- ✅ Создана страница политики конфиденциальности (/privacy-policy)
-- ✅ Реализован виджет чата для пользователей (SupportChatWidget) с privacy consent
-- ✅ Создана админ страница чата поддержки (/admin/support)
-- ✅ WebSocket клиент для real-time уведомлений
-- ✅ REST API endpoints: GET/POST /api/support/messages, GET /api/support/conversations, GET /api/support/customer-info
-- ✅ Проверка ролей в API: только admin/consultant могут читать чужие сообщения
-- ✅ Targeted broadcast: уведомления отправляются только участникам диалога
-- ⚠️ **KNOWN SECURITY ISSUE**: WebSocket authentication не валидирует session cookie - требуется исправление перед production
-- 🔧 TODO: Добавить валидацию сессии при WebSocket handshake (парсинг cookie, проверка req.session)
-
-**November 17, 2025** - Исправление аутентификации и безопасности:
-- ✅ Исправлен flow авторизации: после login вызывается checkAuth() для загрузки ролей
-- ✅ ProtectedRoute показывает loading вместо блокировки если роли ещё не загружены
-- ✅ Убрана утечка информации: список ролей больше не показывается в тексте ошибок
-- ✅ JWT_SECRET переименован в SESSION_SECRET (правильное название для сессий)
-- ✅ Безопасная генерация SESSION_SECRET: авто-генерация только в dev, production требует явный ключ
-- 🔐 Архитектура безопасности: все проверки прав выполняются на backend, frontend только для UX
-
-**November 16, 2025** - Фаза 1: Усиление безопасности и подключение frontend:
-- ✅ JWT_SECRET валидация через Zod (требует 32+ символов, убрано дефолтное значение)
-- ✅ Rate limiting для auth endpoints (5 попыток/15 мин для login/register, 10/мин для promocodes)
-- ✅ Security headers с helmet (строгая CSP в production, отключена в dev для Vite)
-- ✅ Input sanitization для поисковых запросов и ID параметров
-- ✅ WebSocket auth улучшена (токен в первом сообщении вместо URL)
-- ✅ Error handling улучшен (generic messages для 5xx, stack traces только в dev)
-- ✅ Environment validation с полной Zod схемой
-- ✅ Admin статистика endpoint с реальными данными из БД
-- ✅ Frontend полностью подключен к API через React Query хуки
-- ✅ Vite HMR конфигурация обновлена для Replit окружения
-- 📊 Статус безопасности MVP: существенно улучшен
-
-**November 16, 2025** - Комплексный анализ и заполнение базы данных:
-- ✅ Выполнен seed базы данных (4 пользователя, 5 категорий, 30 товаров)
-- ✅ Проведен полный анализ безопасности (найдено 8 критических уязвимостей)
-- ✅ Создан детальный отчет ОТЧЕТ_РАЗРАБОТКА.md с планом доработки
-- ✅ Выявлены все недостающие модули (ЮKassa, СДЭК, Boxberry)
-- ✅ Составлен приоритизированный план на 3 недели разработки
-- ⚠️ Статус готовности MVP: 65%
-
-**November 16, 2025** - Initial Replit Environment Setup:
-- Installed all npm dependencies
-- Configured PostgreSQL database and pushed schema using Drizzle
-- Set up Vite development server on port 5000 with proper host configuration (0.0.0.0)
-- Configured HMR for Replit proxy environment (wss protocol on port 443)
-- Set up dev-server workflow for automatic restarts
-- Configured deployment for autoscale with production build
-- Application is fully functional and running
+This project is a comprehensive e-commerce platform specializing in natural and organic products. It features a React-based Single Page Application (SPA) for the storefront and a Node.js/Express backend. The platform aims to provide a seamless online shopping experience for customers, complemented by robust administrative tools for managing products, orders, and customer data. Key capabilities include a role-based access control system (supporting administrators, marketers, consultants, and customers) and integrations with external services for payments, delivery, and email verification. The business vision is to capture a significant share of the natural products market by offering a user-friendly and efficient online retail solution.
 
 ## User Preferences
 
@@ -114,92 +13,82 @@ Preferred communication style: Simple, everyday language.
 ### Frontend Architecture
 
 **Framework & Routing:**
-- React 18 with TypeScript
-- Wouter for client-side routing
-- Single Page Application (SPA)
-- React.lazy() with Suspense for code splitting and lazy loading
-- Intelligent prefetching system with adaptive loading based on user state
+- React 18 with TypeScript, utilizing Wouter for client-side routing.
+- Single Page Application (SPA) with `React.lazy()` and `Suspense` for code splitting.
+- Intelligent prefetching system adaptively loads pages based on user authentication status and internet quality.
 
 **UI & Styling:**
-- Shadcn UI component library
-- Tailwind CSS for utility-first styling
-- Custom color palette: green (primary), beige, gold accents
-- Mobile-first responsive design
-- Typography: Open Sans (body), Playfair Display/Lora (serif headings)
-- Light/dark mode support
+- Shadcn UI component library and Tailwind CSS for a utility-first approach.
+- Custom color palette (green, beige, gold accents) with a mobile-first responsive design.
+- Typography uses Open Sans for body text and Playfair Display/Lora for headings.
+- Supports light and dark modes.
 
 **State Management:**
-- Zustand for global application state
-- TanStack Query (React Query v5) for server state management and caching
-- React Hook Form with Zod validation for form handling
+- Zustand manages global application state.
+- TanStack Query (React Query v5) handles server state management and caching.
+- React Hook Form with Zod validation is used for form handling.
 
 ### Backend Architecture
 
 **Server Framework:**
-- Node.js with Express.js
-- TypeScript for type safety
-- RESTful API endpoints under `/api`
+- Node.js with Express.js, developed in TypeScript for type safety.
+- RESTful API endpoints are structured under `/api`.
 
 **Authentication & Authorization:**
-- Session-based authentication with PostgreSQL session store (connect-pg-simple)
-- bcrypt for password hashing
-- Role-based access control (RBAC) with middleware
-- Roles: Customer, Consultant, Marketer, Admin
-- Backend enforces all authorization checks, frontend only for UX
+- Session-based authentication with a PostgreSQL session store.
+- `bcrypt` for secure password hashing.
+- Role-based access control (RBAC) implemented via middleware, supporting Customer, Consultant, Marketer, and Admin roles.
+- All authorization checks are strictly enforced on the backend.
 
 **File Upload:**
-- Multer middleware for `multipart/form-data`
-- Stores product images and chat attachments in `/uploads`
-- Supports JPEG, PNG, WEBP formats
+- `Multer` middleware handles `multipart/form-data` for uploading product images and chat attachments.
+- Files are stored in the `/uploads` directory, supporting JPEG, PNG, and WEBP formats.
 
 **Real-time Communication:**
-- WebSocket server (`ws` library) for live support chat notifications
-- WebSocket only for real-time notifications, messages created via REST API
-- Connected users tracked in Map (userId -> WebSocket connection)
-- Targeted broadcast to conversation participants only
-- **Security Warning**: WebSocket auth currently accepts userId without session validation - requires hardening before production
+- A WebSocket server (`ws` library) facilitates real-time notifications for the support chat.
+- WebSocket connections are used exclusively for notifications; message persistence is handled via the REST API.
+- Targeted broadcast ensures notifications are sent only to relevant conversation participants.
 
 ### Data Storage Solutions
 
 **Database:**
-- PostgreSQL as the primary database
-- Neon serverless PostgreSQL for cloud deployment
-- Drizzle ORM for type-safe queries and migrations
+- PostgreSQL serves as the primary database, with Neon serverless PostgreSQL used for cloud deployment.
+- Drizzle ORM provides type-safe queries and manages database migrations.
 
 **Schema Design:**
-- Comprehensive schema including Users, Roles, Products, Categories, Orders, Cart, Wishlist, Comparison, Support Messages, Payment Cards, Addresses.
-- UUID primary keys, timestamps, soft delete patterns, and indexing.
+- The database schema is comprehensive, covering Users, Roles, Products, Categories, Orders, Cart, Wishlist, Support Messages, Payment Cards, and Addresses.
+- Features include UUID primary keys, timestamps, soft delete patterns, and optimized indexing.
 
 ### Business Logic
 
 **Bonus System:**
-- New users receive 100 bonus points.
-- Cashback rates based on order value (3% to 10%).
-- Bonuses cannot be earned with promocodes/existing bonuses.
-- Maximum 20% of order payable with bonuses.
+- New users receive an initial bonus.
+- Cashback rates are tiered based on order value.
+- Bonuses are not combinable with promocodes.
+- A maximum percentage of an order can be paid with bonuses.
 
 **Promocode System:**
-- Percentage-based discounts with min/max order restrictions.
-- Expiration dates, usage limits, active/inactive status.
-- Uppercase code normalization.
+- Supports percentage-based discounts with configurable minimum/maximum order amounts.
+- Includes expiration dates, usage limits, and active/inactive statuses.
+- Promocode normalization to uppercase.
 
 **Order Processing:**
-- Multi-step checkout: address → delivery → payment → confirmation.
-- Integration with delivery services for cost calculation.
-- Support for multiple payment methods and order status tracking.
+- A multi-step checkout process includes address, delivery, payment, and confirmation.
+- Integrations with delivery services for cost calculation.
+- Supports multiple payment methods and order status tracking.
 
 **Support Chat System:**
-- Customer widget with privacy consent (stored in localStorage)
-- Admin interface showing active conversations with customer info
-- Real-time message delivery via WebSocket notifications
-- REST API for message persistence with role-based access control
-- Auto-select first conversation in admin interface
-- Privacy policy page with full consent flow
+- Features a customer-facing widget with privacy consent (stored locally).
+- An admin interface displays active conversations and customer information.
+- Real-time message delivery is enabled via WebSocket notifications.
+- A REST API handles message persistence with role-based access control.
+- An auto-select feature for the first conversation in the admin interface.
+- Includes a dedicated privacy policy page detailing the consent flow.
 
 ## External Dependencies
 
-- **Payment Integration:** YooKassa SDK
-- **Delivery Services:** CDEK API, Boxberry API
-- **Email Service:** Nodemailer (for transactional emails)
-- **Database Service:** Neon serverless PostgreSQL
-- **Development Tools:** Vite, Drizzle Kit, ESBuild
+-   **Payment Integration:** YooKassa SDK
+-   **Delivery Services:** CDEK API, Boxberry API
+-   **Email Service:** Nodemailer (for transactional emails)
+-   **Database Service:** Neon serverless PostgreSQL
+-   **Development Tools:** Vite, Drizzle Kit, ESBuild
