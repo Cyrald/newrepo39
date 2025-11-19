@@ -1,8 +1,9 @@
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import { useQueryClient } from "@tanstack/react-query"
+import { Check } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -47,6 +48,7 @@ export function CategoryFormDialog({ open, onOpenChange, category }: CategoryFor
   const queryClient = useQueryClient()
   const createCategory = useCreateCategory()
   const updateCategory = useUpdateCategory()
+  const [isSaved, setIsSaved] = useState(false)
 
   const isEditMode = !!category
 
@@ -85,14 +87,19 @@ export function CategoryFormDialog({ open, onOpenChange, category }: CategoryFor
           id: category.id,
           data,
         })
+        
+        setIsSaved(true)
+        setTimeout(() => setIsSaved(false), 2000)
+        
+        await queryClient.invalidateQueries({ queryKey: ["categories"] })
       } else {
         await createCategory.mutateAsync(data)
+        
+        await queryClient.invalidateQueries({ queryKey: ["categories"] })
+        
+        onOpenChange(false)
+        form.reset()
       }
-      
-      await queryClient.invalidateQueries({ queryKey: ["categories"] })
-      
-      onOpenChange(false)
-      form.reset()
     } catch (error: any) {
       toast({
         title: "Ошибка",
@@ -241,8 +248,19 @@ export function CategoryFormDialog({ open, onOpenChange, category }: CategoryFor
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
                 Отмена
               </Button>
-              <Button type="submit" disabled={createCategory.isPending || updateCategory.isPending}>
-                {isEditMode ? "Сохранить изменения" : "Создать категорию"}
+              <Button type="submit" disabled={createCategory.isPending || updateCategory.isPending || isSaved}>
+                {isSaved ? (
+                  <>
+                    <Check className="h-4 w-4 mr-2" />
+                    Сохранено
+                  </>
+                ) : createCategory.isPending || updateCategory.isPending ? (
+                  "Сохранение..."
+                ) : isEditMode ? (
+                  "Сохранить"
+                ) : (
+                  "Создать категорию"
+                )}
               </Button>
             </DialogFooter>
           </form>
