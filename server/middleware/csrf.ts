@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { doubleCsrf } from 'csrf-csrf';
 import { env } from '../env';
+import { logger } from '../utils/logger';
 
 const {
   invalidCsrfTokenError,
@@ -29,7 +30,7 @@ export function csrfMiddleware(req: Request, res: Response, next: NextFunction):
   doubleCsrfProtection(req, res, (err) => {
     if (err) {
       if (err === invalidCsrfTokenError) {
-        console.warn('CSRF validation failed', {
+        logger.warn('CSRF validation failed', {
           path: req.path,
           method: req.method,
           ip: req.ip,

@@ -2,6 +2,8 @@ import sharp from "sharp";
 import path from "path";
 import fs from "fs/promises";
 import { randomUUID } from "crypto";
+import { PathSecurityValidator } from "./utils/pathSecurity";
+import { logger } from "./utils/logger";
 
 export interface ImagePipelineConfig {
   maxWidth: number;
@@ -41,12 +43,14 @@ export class ImagePipeline {
   private tempFiles: Map<string, number> = new Map();
   private cleanupInterval: NodeJS.Timeout | null = null;
   private readonly TEMP_FILE_MAX_AGE_MS = 30 * 60 * 1000;
+  private pathValidator: PathSecurityValidator;
 
   constructor(uploadsDir: string, urlPrefix: string, config: Partial<ImagePipelineConfig> = {}) {
-    this.uploadsDir = uploadsDir;
-    this.tempDir = path.join(uploadsDir, '.temp');
+    this.uploadsDir = path.resolve(uploadsDir);
+    this.tempDir = path.join(this.uploadsDir, '.temp');
     this.urlPrefix = urlPrefix;
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.pathValidator = new PathSecurityValidator(this.uploadsDir);
     
     this.startPeriodicCleanup();
   }
@@ -80,7 +84,7 @@ export class ImagePipeline {
     }
     
     if (staleFiles.length > 0) {
-      console.log(`[ImagePipeline] Cleaned up ${staleFiles.length} stale temp files`);
+      logger.info('Cleaned up stale temp files', { count: staleFiles.length });
     }
   }
   
@@ -111,7 +115,7 @@ export class ImagePipeline {
           this.tempFiles.delete(tempPath);
         } catch (error: any) {
           if (error.code !== 'ENOENT') {
-            console.warn(`Failed to cleanup temp file ${tempPath}:`, error);
+            logger.warn('Failed to cleanup temp file', { tempPath, error: error.message });
           } else {
             this.tempFiles.delete(tempPath);
           }
@@ -232,8 +236,8 @@ export class ImagePipeline {
       for (const filePath of processedFiles) {
         try {
           await fs.unlink(filePath);
-        } catch (unlinkError) {
-          console.warn(`Failed to rollback file ${filePath}:`, unlinkError);
+        } catch (unlinkError: any) {
+          logger.warn('Failed to rollback file', { filePath, error: unlinkError.message });
         }
       }
 
@@ -242,33 +246,16 @@ export class ImagePipeline {
   }
 
   async deleteImage(filename: string): Promise<void> {
-    if (!filename || typeof filename !== 'string') {
-      throw new Error('Invalid filename parameter');
-    }
-
-    if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
-      throw new Error('Invalid filename: path traversal detected');
-    }
-
-    if (filename.startsWith('.')) {
-      throw new Error('Invalid filename: hidden files not allowed');
-    }
-
-    const filePath = path.join(this.uploadsDir, filename);
-    
-    const resolvedPath = path.resolve(filePath);
-    const resolvedUploadsDir = path.resolve(this.uploadsDir);
-    
-    if (!resolvedPath.startsWith(resolvedUploadsDir + path.sep) && resolvedPath !== resolvedUploadsDir) {
-      throw new Error('Path traversal attempt detected');
-    }
-    
     try {
-      await fs.unlink(filePath);
+      const securePath = this.pathValidator.getSecurePath(filename);
+      await fs.unlink(securePath);
     } catch (error: any) {
-      if (error.code !== 'ENOENT') {
-        throw new Error('Не удалось удалить изображение');
+      if (error.code === 'ENOENT') {
+        logger.warn('Attempted to delete non-existent file', { filename });
+        return;
       }
+      logger.error('Failed to delete image', { filename, error: error.message });
+      throw new Error('Не удалось удалить изображение');
     }
   }
 
@@ -282,7 +269,7 @@ export class ImagePipeline {
           this.tempFiles.delete(tempPath);
         } catch (error: any) {
           if (error.code !== 'ENOENT') {
-            console.warn(`Failed to cleanup temp file ${tempPath}:`, error);
+            logger.warn('Failed to cleanup temp file', { tempPath, error: error.message });
           } else {
             this.tempFiles.delete(tempPath);
           }

@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { AppError } from '../utils/errors';
 import { ZodError } from 'zod';
+import { logger } from '../utils/logger';
 
 export function errorHandler(
   error: any,
@@ -8,7 +9,7 @@ export function errorHandler(
   res: Response,
   next: NextFunction
 ): void {
-  console.error('Error:', {
+  logger.error('Request error', {
     name: error.name,
     message: error.message,
     stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,

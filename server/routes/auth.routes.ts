@@ -1,11 +1,13 @@
 import { Router } from "express";
 import { storage } from "../storage";
-import { hashPassword, comparePassword, authenticateToken } from "../auth";
+import { hashPassword, comparePassword, safePasswordCompare, authenticateToken } from "../auth";
 import { generateVerificationToken, sendVerificationEmail } from "../email";
 import { registerSchema, loginSchema, updateProfileSchema, changePasswordSchema } from "@shared/schema";
 import { z } from "zod";
 import { authLimiter, registerLimiter, passwordChangeLimiter } from "../middleware/rateLimiter";
 import { logLoginAttempt, logRegistration } from "../utils/securityLogger";
+import { logger } from "../utils/logger";
+import { invalidateAllUserSessions } from "../utils/sessionManager";
 
 const router = Router();
 
@@ -49,7 +51,7 @@ router.post("/register", registerLimiter, async (req, res) => {
   
   req.session.regenerate((err) => {
     if (err) {
-      console.error('Session regeneration error during registration:', err);
+      logger.error('Session regeneration error during registration', { error: err.message });
       return res.status(500).json({ message: "Ошибка регистрации" });
     }
     
@@ -84,25 +86,17 @@ router.post("/login", authLimiter, async (req, res) => {
   const sanitizedEmail = data.email.toLowerCase().trim();
   const user = await storage.getUserByEmail(sanitizedEmail);
 
-  if (!user) {
+  const isPasswordValid = await safePasswordCompare(
+    data.password, 
+    user?.passwordHash || null
+  );
+
+  if (!user || !isPasswordValid) {
     logLoginAttempt({
       email: sanitizedEmail,
+      userId: user?.id,
       success: false,
-      failureReason: 'user_not_found',
-      ip: req.ip,
-      userAgent: req.get('user-agent'),
-    });
-    return res.status(401).json({ message: "Неверный email или пароль" });
-  }
-
-  const isPasswordValid = await comparePassword(data.password, user.passwordHash);
-
-  if (!isPasswordValid) {
-    logLoginAttempt({
-      email: sanitizedEmail,
-      userId: user.id,
-      success: false,
-      failureReason: 'invalid_password',
+      failureReason: !user ? 'user_not_found' : 'invalid_password',
       ip: req.ip,
       userAgent: req.get('user-agent'),
     });
@@ -114,7 +108,7 @@ router.post("/login", authLimiter, async (req, res) => {
   
   req.session.regenerate((err) => {
     if (err) {
-      console.error('Session regeneration error during login:', err);
+      logger.error('Session regeneration error during login', { error: err.message });
       return res.status(500).json({ message: "Ошибка входа" });
     }
     
@@ -263,7 +257,21 @@ router.put("/password", authenticateToken, passwordChangeLimiter, async (req, re
       passwordHash: newPasswordHash,
     });
 
-    res.json({ message: "Пароль успешно изменён" });
+    await invalidateAllUserSessions(req.userId!);
+
+    req.session.destroy((err) => {
+      if (err) {
+        logger.error('Failed to destroy current session after password change', { 
+          userId: req.userId, 
+          error: err.message 
+        });
+      }
+    });
+
+    res.clearCookie('sessionId');
+    res.json({ 
+      message: "Пароль успешно изменён. Все активные сессии завершены. Пожалуйста, войдите снова." 
+    });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ message: error.errors[0].message });

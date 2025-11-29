@@ -12,6 +12,7 @@ import { errorHandler } from "./middleware/errorHandler";
 import { generalApiLimiter } from "./middleware/rateLimiter";
 import { csrfMiddleware, csrfTokenEndpoint } from "./middleware/csrf";
 import { logger } from "./utils/logger";
+import { pool } from "./db";
 
 const app = express();
 
@@ -57,9 +58,11 @@ declare module 'http' {
 
 // JSON parser - только для application/json запросов
 app.use(express.json({
-  limit: '50mb',
+  limit: '10mb',
   verify: (req, _res, buf) => {
-    req.rawBody = buf;
+    if (req.url && req.url.startsWith('/api/webhooks/')) {
+      req.rawBody = buf;
+    }
   },
   type: (req) => {
     const contentType = req.headers['content-type'] || '';
@@ -69,9 +72,9 @@ app.use(express.json({
 
 // URL-encoded parser - только для application/x-www-form-urlencoded
 app.use(express.urlencoded({ 
-  limit: '50mb', 
+  limit: '10mb', 
   extended: false,
-  type: 'application/x-www-form-urlencoded' // Явно указываем тип
+  type: 'application/x-www-form-urlencoded'
 }));
 
 
@@ -119,5 +122,65 @@ app.use(express.urlencoded({
       nodeVersion: process.version 
     });
     log(`serving on port ${port}`);
+  });
+
+  let isShuttingDown = false;
+  
+  const gracefulShutdown = async (signal: string) => {
+    if (isShuttingDown) {
+      logger.warn('Shutdown already in progress', { signal });
+      return;
+    }
+    
+    isShuttingDown = true;
+    logger.info('Graceful shutdown initiated', { signal });
+    
+    server.close(async (err) => {
+      if (err) {
+        logger.error('Error closing HTTP server', { error: err.message });
+      } else {
+        logger.info('HTTP server closed');
+      }
+      
+      try {
+        const { productImagePipeline, chatImagePipeline } = await import('./ImagePipeline');
+        await Promise.all([
+          productImagePipeline.cleanup(),
+          chatImagePipeline.cleanup(),
+        ]);
+        logger.info('Image pipelines cleaned up');
+        
+        productImagePipeline.destroy();
+        chatImagePipeline.destroy();
+        logger.info('Image pipelines destroyed');
+        
+        await pool.end();
+        logger.info('Database pool closed');
+        
+        logger.info('Graceful shutdown complete');
+        process.exit(0);
+      } catch (cleanupError: any) {
+        logger.error('Error during cleanup', { error: cleanupError.message });
+        process.exit(1);
+      }
+    });
+    
+    setTimeout(() => {
+      logger.error('Forceful shutdown after timeout');
+      process.exit(1);
+    }, 30000);
+  };
+  
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+  
+  process.on('uncaughtException', (error) => {
+    logger.error('Uncaught exception', { error: error.message, stack: error.stack });
+    gracefulShutdown('uncaughtException');
+  });
+  
+  process.on('unhandledRejection', (reason, promise) => {
+    logger.error('Unhandled rejection', { reason, promise });
+    gracefulShutdown('unhandledRejection');
   });
 })();
