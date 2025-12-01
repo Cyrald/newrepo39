@@ -10,6 +10,7 @@ import { logger } from "../utils/logger";
 import { validatePassword } from "../utils/sanitize";
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from "../utils/jwt";
 import { env } from "../env";
+import { connectedUsers } from "../routes";
 
 const router = Router();
 
@@ -189,12 +190,25 @@ router.post("/logout", authenticateToken, async (req, res) => {
       }
     }
     
+    const connection = connectedUsers.get(req.userId!);
+    if (connection) {
+      connection.ws.close(1000, 'User logged out');
+      connectedUsers.delete(req.userId!);
+      logger.info('WebSocket connection closed on logout', { userId: req.userId });
+    }
+    
+    invalidateUserCache(req.userId!);
+    
     res.clearCookie('accessToken', { path: '/' });
-    res.clearCookie('refreshToken', { path: '/api/auth/refresh' });
+    res.clearCookie('refreshToken', { path: '/api/auth' });
     
     res.json({ message: "Выход выполнен" });
   } catch (error) {
     logger.error('Logout error', { error });
+    
+    res.clearCookie('accessToken', { path: '/' });
+    res.clearCookie('refreshToken', { path: '/api/auth' });
+    
     res.status(500).json({ message: "Ошибка выхода" });
   }
 });

@@ -2,11 +2,11 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
-import { db } from "./db";
-import * as cookieSignature from "cookie-signature";
 import { env } from "./env";
 import { logger } from "./utils/logger";
 import { BUSINESS_CONFIG } from "./config/business";
+import { verifyAccessToken } from "./utils/jwt";
+import { getUserStatus } from "./utils/userCache";
 
 import healthRoutes from "./routes/health.routes";
 import authRoutes from "./routes/auth.routes";
@@ -21,15 +21,13 @@ import { createOrdersRoutes } from "./routes/orders.routes";
 import adminRoutes from "./routes/admin.routes";
 import { createSupportRoutes } from "./routes/support.routes";
 
+export const connectedUsers = new Map<string, { ws: any, roles: string[] }>();
+
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
   const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
-  const connectedUsers = new Map<string, { ws: any, roles: string[] }>();
-
-  const SESSION_ID_REGEX = /^[a-zA-Z0-9_-]{20,128}$/;
-
-  async function validateSessionFromCookie(cookieHeader: string | undefined): Promise<{ userId: string; userRoles: string[] } | null> {
+  async function validateJWTFromCookie(cookieHeader: string | undefined): Promise<{ userId: string; userRoles: string[] } | null> {
     if (!cookieHeader) return null;
     
     const cookies = cookieHeader.split(';').reduce((acc, cookie) => {
@@ -38,56 +36,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return acc;
     }, {} as Record<string, string>);
     
-    const sessionCookie = cookies['sessionId'];
-    if (!sessionCookie) return null;
-    
-    const decodedCookie = decodeURIComponent(sessionCookie);
-    
-    if (!decodedCookie.startsWith('s:')) {
-      return null;
-    }
-    
-    const signedValue = decodedCookie.slice(2);
-    const unsignedValue = cookieSignature.unsign(signedValue, env.SESSION_SECRET);
-    
-    if (unsignedValue === false) {
-      return null;
-    }
-    
-    const sid = unsignedValue;
-    
-    if (!SESSION_ID_REGEX.test(sid)) {
-      logger.warn('Invalid session ID format detected');
-      return null;
-    }
+    const token = cookies['accessToken'];
+    if (!token) return null;
     
     try {
-      const sessionRecord = await db.query.sessions.findFirst({
-        where: (sessions, { eq }) => eq(sessions.sid, sid),
-      });
+      const payload = verifyAccessToken(token);
       
-      if (!sessionRecord) return null;
+      const userStatus = await getUserStatus(payload.userId);
       
-      const now = new Date();
-      const expireDate = new Date(sessionRecord.expire);
-      
-      if (expireDate < now) {
-        logger.warn('Expired session detected in WebSocket', { 
-          sid, 
-          expiredAt: expireDate 
+      if (payload.v < userStatus.tokenVersion) {
+        logger.warn('WebSocket: Revoked token attempt', {
+          userId: payload.userId,
+          tokenVersion: payload.v,
+          currentVersion: userStatus.tokenVersion
         });
         return null;
       }
       
-      const sessionData = sessionRecord.sess as any;
-      if (!sessionData || !sessionData.userId) return null;
+      if (userStatus.deletedAt) {
+        logger.warn('WebSocket: Deleted user attempt', { userId: payload.userId });
+        return null;
+      }
+      
+      if (userStatus.banned) {
+        logger.warn('WebSocket: Banned user attempt', { userId: payload.userId });
+        return null;
+      }
       
       return {
-        userId: sessionData.userId,
-        userRoles: sessionData.userRoles || []
+        userId: payload.userId,
+        userRoles: payload.roles
       };
     } catch (error) {
-      logger.error('Session validation error', { error });
+      logger.warn('WebSocket: Invalid JWT', { error });
       return null;
     }
   }
@@ -168,17 +149,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     ipLimit.count++;
     connectionRateLimits.set(clientIp, ipLimit);
     
-    const sessionData = await validateSessionFromCookie(req.headers.cookie);
+    const jwtData = await validateJWTFromCookie(req.headers.cookie);
     
-    if (!sessionData) {
-      logger.warn('WebSocket connection rejected - invalid session', { clientIp });
-      ws.close(1008, 'Unauthorized - invalid session');
+    if (!jwtData) {
+      logger.warn('WebSocket connection rejected - invalid JWT', { clientIp });
+      ws.close(1008, 'Unauthorized - invalid JWT token');
       return;
     }
     
-    const userId = sessionData.userId;
-    const userRoleRecords = await storage.getUserRoles(userId);
-    const userRoles = userRoleRecords.map(r => r.role);
+    const userId = jwtData.userId;
+    const userRoles = jwtData.userRoles;
     connectedUsers.set(userId, { ws, roles: userRoles });
     
     activeConns.add(ws);

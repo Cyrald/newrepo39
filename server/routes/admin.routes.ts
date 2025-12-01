@@ -5,6 +5,8 @@ import { authenticateToken, requireRole } from "../auth";
 import { sql, count, sum, eq } from "drizzle-orm";
 import { users, products, orders, userRoles } from "@shared/schema";
 import { invalidateUserCache } from "../utils/userCache";
+import { connectedUsers } from "../routes";
+import { logger } from "../utils/logger";
 
 const router = Router();
 
@@ -71,10 +73,18 @@ router.post("/users/:userId/ban", authenticateToken, requireRole("admin"), async
     
     await storage.deleteAllRefreshTokens(userId);
     
+    const connection = connectedUsers.get(userId);
+    if (connection) {
+      connection.ws.close(1008, 'Account banned');
+      connectedUsers.delete(userId);
+      logger.info('WebSocket connection closed on ban', { userId });
+    }
+    
     invalidateUserCache(userId);
     
     res.json({ success: true, message: "Пользователь заблокирован" });
   } catch (error) {
+    logger.error('User ban failed', { userId: req.params.userId, error });
     res.status(500).json({ message: "Ошибка блокировки пользователя" });
   }
 });
