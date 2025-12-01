@@ -5,17 +5,13 @@ import { setupVite, serveStatic, log } from "./vite";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import { env } from "./env";
-import { sessionMiddleware } from "./session";
 import { corsMiddleware } from "./middleware/cors";
 import { requestLogger } from "./middleware/requestLogger";
 import { errorHandler } from "./middleware/errorHandler";
 import { generalApiLimiter } from "./middleware/rateLimiter";
-import { csrfMiddleware, csrfTokenEndpoint } from "./middleware/csrf";
-import { sessionRefreshMiddleware } from "./middleware/sessionRefresh";
 import { logger } from "./utils/logger";
 import { pool } from "./db";
 import { startDataRetentionScheduler } from "./scheduler";
-import { authenticateToken } from "./auth";
 
 const app = express();
 
@@ -61,8 +57,6 @@ app.use(helmet({
 
 app.use(requestLogger);
 app.use(cookieParser());
-app.use(sessionMiddleware);
-app.use(sessionRefreshMiddleware); // Level 3: Refresh session TTL on every request
 
 if (env.NODE_ENV === 'development') {
   app.use((req, res, next) => {
@@ -112,18 +106,9 @@ app.use(express.urlencoded({
   
   app.use('/api', generalApiLimiter);
   
-  // Webhooks without CSRF protection (they use signature verification)
   const webhooksRoutes = await import('./routes/webhooks.routes');
   app.use('/api/webhooks', webhooksRoutes.default);
   
-  // CSRF token endpoint (requires authentication but NO CSRF token)
-  // This is used to get initial token after login/register
-  app.get('/api/csrf-token-init', authenticateToken, csrfTokenEndpoint);
-  
-  // Apply CSRF protection to ALL /api routes (registered AFTER this middleware)
-  app.use('/api', csrfMiddleware);
-  
-  // Register all API routes AFTER CSRF middleware (so they are protected)
   const server = await registerRoutes(app);
 
   app.use(errorHandler);

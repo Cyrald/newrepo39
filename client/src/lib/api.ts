@@ -26,29 +26,47 @@ export class ApiError extends Error {
   }
 }
 
-function getCsrfTokenFromCookie(): string | null {
-  if (typeof document === 'undefined') return null;
-  
-  const cookies = document.cookie.split('; ');
-  const csrfCookie = cookies.find(c => c.startsWith('csrf-token='));
-  return csrfCookie ? csrfCookie.split('=')[1] : null;
+let isRefreshing = false;
+let refreshPromise: Promise<void> | null = null;
+
+async function refreshAccessToken(): Promise<void> {
+  if (isRefreshing && refreshPromise) {
+    return refreshPromise;
+  }
+
+  isRefreshing = true;
+  refreshPromise = fetch('/api/auth/refresh', {
+    method: 'POST',
+    credentials: 'include',
+  }).then(async (response) => {
+    if (!response.ok) {
+      isRefreshing = false;
+      refreshPromise = null;
+      throw new Error('Failed to refresh token');
+    }
+    isRefreshing = false;
+    refreshPromise = null;
+  }).catch((error) => {
+    isRefreshing = false;
+    refreshPromise = null;
+    throw error;
+  });
+
+  return refreshPromise;
 }
 
 async function fetchApi<T>(
   endpoint: string,
   options: RequestInit = {},
 ): Promise<T> {
+  const isFormData = options.body instanceof FormData;
+  
   const headers: Record<string, string> = {
     ...(options.headers as Record<string, string>),
   };
 
-  if (!(options.body instanceof FormData)) {
+  if (!isFormData) {
     headers["Content-Type"] = "application/json";
-  }
-
-  const csrfToken = getCsrfTokenFromCookie();
-  if (csrfToken && options.method && options.method !== 'GET') {
-    headers["x-csrf-token"] = csrfToken;
   }
 
   const response = await fetch(endpoint, {
@@ -56,6 +74,37 @@ async function fetchApi<T>(
     headers,
     credentials: 'include',
   });
+
+  if (response.status === 401 && !endpoint.includes('/auth/login') && !endpoint.includes('/auth/register') && !endpoint.includes('/auth/refresh')) {
+    try {
+      await refreshAccessToken();
+      
+      const retryHeaders: Record<string, string> = {
+        ...(options.headers as Record<string, string>),
+      };
+      
+      if (!isFormData) {
+        retryHeaders["Content-Type"] = "application/json";
+      }
+      
+      const retryResponse = await fetch(endpoint, {
+        ...options,
+        headers: retryHeaders,
+        credentials: 'include',
+      });
+
+      if (!retryResponse.ok) {
+        const errorData = await retryResponse.json().catch(() => ({
+          message: "Произошла ошибка",
+        }));
+        throw new ApiError(retryResponse.status, errorData.message || "Произошла ошибка");
+      }
+
+      return retryResponse.json();
+    } catch (error) {
+      throw new ApiError(401, "Сессия истекла. Пожалуйста, войдите снова.");
+    }
+  }
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({
@@ -70,13 +119,13 @@ async function fetchApi<T>(
 // Аутентификация
 export const authApi = {
   register: (data: RegisterInput) =>
-    fetchApi<{ user: User; csrfToken: string }>("/api/auth/register", {
+    fetchApi<{ user: User }>("/api/auth/register", {
       method: "POST",
       body: JSON.stringify(data),
     }),
 
   login: (data: LoginInput) =>
-    fetchApi<{ user: User; csrfToken: string }>("/api/auth/login", {
+    fetchApi<{ user: User }>("/api/auth/login", {
       method: "POST",
       body: JSON.stringify(data),
     }),
@@ -89,7 +138,7 @@ export const authApi = {
   verifyEmail: (token: string) =>
     fetchApi<{ success: boolean }>(`/api/auth/verify-email?token=${token}`),
 
-  me: () => fetchApi<User>("/api/auth/me"),
+  me: () => fetchApi<{ user: User }>("/api/auth/me"),
 
   updateProfile: (data: {
     firstName?: string;
@@ -97,13 +146,13 @@ export const authApi = {
     patronymic?: string;
     phone?: string;
   }) =>
-    fetchApi<User>("/api/auth/profile", {
+    fetchApi<{ user: User }>("/api/auth/profile", {
       method: "PUT",
       body: JSON.stringify(data),
     }),
 
   updatePassword: (data: { currentPassword: string; newPassword: string }) =>
-    fetchApi<{ success: boolean }>("/api/auth/password", {
+    fetchApi<{ message: string }>("/api/auth/password", {
       method: "PUT",
       body: JSON.stringify(data),
     }),

@@ -7,15 +7,33 @@ async function throwIfResNotOk(res: Response) {
   }
 }
 
-function getCsrfToken(): string | null {
-  const cookies = document.cookie.split(';');
-  for (const cookie of cookies) {
-    const [name, value] = cookie.trim().split('=');
-    if (name === 'csrf-token') {
-      return value;
-    }
+let isRefreshing = false;
+let refreshPromise: Promise<void> | null = null;
+
+async function refreshAccessToken(): Promise<void> {
+  if (isRefreshing && refreshPromise) {
+    return refreshPromise;
   }
-  return null;
+
+  isRefreshing = true;
+  refreshPromise = fetch('/api/auth/refresh', {
+    method: 'POST',
+    credentials: 'include',
+  }).then(async (response) => {
+    if (!response.ok) {
+      isRefreshing = false;
+      refreshPromise = null;
+      throw new Error('Failed to refresh token');
+    }
+    isRefreshing = false;
+    refreshPromise = null;
+  }).catch((error) => {
+    isRefreshing = false;
+    refreshPromise = null;
+    throw error;
+  });
+
+  return refreshPromise;
 }
 
 export async function apiRequest<T = unknown>(
@@ -33,11 +51,6 @@ export async function apiRequest<T = unknown>(
   if (data && !isFileUpload) {
     headers["Content-Type"] = "application/json";
   }
-  
-  const csrfToken = getCsrfToken();
-  if (csrfToken && method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
-    headers["x-csrf-token"] = csrfToken;
-  }
 
   const res = await fetch(url, {
     method,
@@ -45,6 +58,40 @@ export async function apiRequest<T = unknown>(
     body: isFileUpload ? (data as any) : (data ? JSON.stringify(data) : undefined),
     credentials: "include",
   });
+
+  if (res.status === 401 && !url.includes('/auth/login') && !url.includes('/auth/register') && !url.includes('/auth/refresh')) {
+    try {
+      await refreshAccessToken();
+      
+      const retryHeaders: Record<string, string> = {};
+      
+      if (data && !isFileUpload) {
+        retryHeaders["Content-Type"] = "application/json";
+      }
+      
+      const retryRes = await fetch(url, {
+        method,
+        headers: retryHeaders,
+        body: isFileUpload ? (data as any) : (data ? JSON.stringify(data) : undefined),
+        credentials: "include",
+      });
+
+      await throwIfResNotOk(retryRes);
+      
+      if (retryRes.status === 204 || retryRes.headers.get('content-length') === '0') {
+        return undefined as T;
+      }
+      
+      const contentType = retryRes.headers.get('content-type') ?? '';
+      if (contentType.includes('application/json')) {
+        return (await retryRes.json()) as T;
+      }
+      
+      return (await retryRes.text()) as T;
+    } catch (error) {
+      throw new Error('Сессия истекла. Пожалуйста, войдите снова.');
+    }
+  }
 
   await throwIfResNotOk(res);
   

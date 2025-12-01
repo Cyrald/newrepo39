@@ -4,6 +4,8 @@ import {
   type InsertUser,
   type UserRole,
   type InsertUserRole,
+  type RefreshToken,
+  type InsertRefreshToken,
   type Category,
   type InsertCategory,
   type Product,
@@ -32,6 +34,7 @@ import {
   type InsertSupportMessageAttachment,
   users,
   userRoles,
+  refreshTokens,
   categories,
   products,
   productImages,
@@ -61,6 +64,13 @@ export interface IStorage {
   getUserRoles(userId: string): Promise<UserRole[]>;
   addUserRole(role: InsertUserRole): Promise<UserRole>;
   removeUserRole(userId: string, role: string): Promise<void>;
+  
+  createRefreshToken(params: InsertRefreshToken): Promise<RefreshToken>;
+  validateRefreshToken(jti: string): Promise<boolean>;
+  deleteRefreshToken(jti: string): Promise<void>;
+  deleteAllRefreshTokens(userId: string): Promise<void>;
+  getUserRefreshTokens(userId: string): Promise<RefreshToken[]>;
+  incrementTokenVersion(userId: string): Promise<number>;
   
   getCategories(): Promise<Category[]>;
   getCategory(id: string): Promise<Category | undefined>;
@@ -197,6 +207,48 @@ export class DatabaseStorage implements IStorage {
     await db
       .delete(userRoles)
       .where(and(eq(userRoles.userId, userId), eq(userRoles.role, role)));
+  }
+
+  async createRefreshToken(params: InsertRefreshToken): Promise<RefreshToken> {
+    const [token] = await db.insert(refreshTokens).values(params).returning();
+    return token;
+  }
+
+  async validateRefreshToken(jti: string): Promise<boolean> {
+    const [token] = await db.query.refreshTokens.findFirst({
+      where: eq(refreshTokens.jti, jti),
+    });
+    
+    if (!token) return false;
+    if (new Date(token.expiresAt) < new Date()) {
+      await this.deleteRefreshToken(jti);
+      return false;
+    }
+    
+    return true;
+  }
+
+  async deleteRefreshToken(jti: string): Promise<void> {
+    await db.delete(refreshTokens).where(eq(refreshTokens.jti, jti));
+  }
+
+  async deleteAllRefreshTokens(userId: string): Promise<void> {
+    await db.delete(refreshTokens).where(eq(refreshTokens.userId, userId));
+  }
+
+  async getUserRefreshTokens(userId: string): Promise<RefreshToken[]> {
+    return db.query.refreshTokens.findMany({
+      where: eq(refreshTokens.userId, userId),
+      orderBy: [desc(refreshTokens.createdAt)],
+    });
+  }
+
+  async incrementTokenVersion(userId: string): Promise<number> {
+    const [updated] = await db.update(users)
+      .set({ tokenVersion: sql`${users.tokenVersion} + 1` })
+      .where(eq(users.id, userId))
+      .returning({ newVersion: users.tokenVersion });
+    return updated.newVersion;
   }
 
   async getCategories(): Promise<Category[]> {

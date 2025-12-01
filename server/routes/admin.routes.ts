@@ -4,6 +4,7 @@ import { db } from "../db";
 import { authenticateToken, requireRole } from "../auth";
 import { sql, count, sum, eq } from "drizzle-orm";
 import { users, products, orders, userRoles } from "@shared/schema";
+import { invalidateUserCache } from "../utils/userCache";
 
 const router = Router();
 
@@ -58,6 +59,38 @@ router.get("/users", authenticateToken, requireRole("admin"), async (req, res) =
   }));
 
   res.json(usersWithRoles);
+});
+
+router.post("/users/:userId/ban", authenticateToken, requireRole("admin"), async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    await storage.updateUser(userId, { banned: true });
+    
+    await storage.incrementTokenVersion(userId);
+    
+    await storage.deleteAllRefreshTokens(userId);
+    
+    invalidateUserCache(userId);
+    
+    res.json({ success: true, message: "Пользователь заблокирован" });
+  } catch (error) {
+    res.status(500).json({ message: "Ошибка блокировки пользователя" });
+  }
+});
+
+router.post("/users/:userId/unban", authenticateToken, requireRole("admin"), async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    await storage.updateUser(userId, { banned: false });
+    
+    invalidateUserCache(userId);
+    
+    res.json({ success: true, message: "Пользователь разблокирован" });
+  } catch (error) {
+    res.status(500).json({ message: "Ошибка разблокировки пользователя" });
+  }
 });
 
 export default router;

@@ -1,16 +1,15 @@
 import { Router } from "express";
 import { storage } from "../storage";
-import { hashPassword, comparePassword, safePasswordCompare, authenticateToken } from "../auth";
+import { hashPassword, comparePassword, safePasswordCompare, authenticateToken, invalidateUserCache } from "../auth";
 import { generateVerificationToken, sendVerificationEmail } from "../email";
 import { registerSchema, loginSchema, updateProfileSchema, changePasswordSchema } from "@shared/schema";
 import { z } from "zod";
 import { authLimiter, registerLimiter, passwordChangeLimiter } from "../middleware/rateLimiter";
 import { logLoginAttempt, logRegistration } from "../utils/securityLogger";
 import { logger } from "../utils/logger";
-import { invalidateAllUserSessions } from "../utils/sessionManager";
 import { validatePassword } from "../utils/sanitize";
-import { initializeSessionWithUser } from "../utils/sessionUtils";
-import { generateCsrfToken } from "../middleware/csrf";
+import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from "../utils/jwt";
+import { env } from "../env";
 
 const router = Router();
 
@@ -53,48 +52,53 @@ router.post("/register", registerLimiter, async (req, res) => {
   const roles = await storage.getUserRoles(user.id);
   const roleNames = roles.map(r => r.role);
   
-  try {
-    // Initialize session with proper async/await
-    // This GUARANTEES session is saved to DB before response
-    await initializeSessionWithUser(req, user.id, roleNames);
-    
-    // Level 2: Log session creation with TTL info
-    const sessionExpiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
-    logger.info('Session initialized with TTL', {
-      userId: user.id,
-      sessionId: req.sessionID,
-      expiresAt: sessionExpiresAt.toISOString(),
-      ttlDays: 14,
-    });
-    
-    // Generate CSRF token AFTER session is fully initialized
-    // This ensures token is tied to the correct sessionId
-    const csrfToken = generateCsrfToken(req, res);
-    
-    logRegistration({
-      email: user.email,
-      userId: user.id,
-      ip: req.ip,
-      userAgent: req.get('user-agent'),
-    });
+  const accessToken = generateAccessToken(user.id, roleNames, 1);
+  const { token: refreshToken, jti } = generateRefreshToken(user.id);
+  
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  await storage.createRefreshToken({
+    userId: user.id,
+    jti,
+    expiresAt,
+    userAgent: req.get('user-agent') || null,
+    ipAddress: req.ip || null,
+  });
+  
+  res.cookie('accessToken', accessToken, {
+    httpOnly: true,
+    secure: env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    maxAge: 15 * 60 * 1000,
+    path: '/',
+  });
+  
+  res.cookie('refreshToken', refreshToken, {
+    httpOnly: true,
+    secure: env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+    path: '/api/auth/refresh',
+  });
+  
+  logRegistration({
+    email: user.email,
+    userId: user.id,
+    ip: req.ip,
+    userAgent: req.get('user-agent'),
+  });
 
-    res.json({
-      user: {
-        id: user.id,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        phone: user.phone,
-        isVerified: user.isVerified,
-        bonusBalance: user.bonusBalance,
-        roles: roleNames,
-      },
-      csrfToken,
-    });
-  } catch (error) {
-    logger.error('Session initialization failed during registration', { error });
-    return res.status(500).json({ message: "Ошибка регистрации" });
-  }
+  res.json({
+    user: {
+      id: user.id,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      phone: user.phone,
+      isVerified: user.isVerified,
+      bonusBalance: user.bonusBalance,
+      roles: roleNames,
+    },
+  });
 });
 
 router.post("/login", authLimiter, async (req, res) => {
@@ -123,59 +127,142 @@ router.post("/login", authLimiter, async (req, res) => {
   const roles = await storage.getUserRoles(user.id);
   const roleNames = roles.map(r => r.role);
   
-  try {
-    // Initialize session with proper async/await
-    // This GUARANTEES session is saved to DB before response
-    await initializeSessionWithUser(req, user.id, roleNames);
-    
-    // Level 2: Log session creation with TTL info
-    const sessionExpiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
-    logger.info('Session initialized with TTL', {
-      userId: user.id,
-      sessionId: req.sessionID,
-      expiresAt: sessionExpiresAt.toISOString(),
-      ttlDays: 14,
-    });
-    
-    // Generate CSRF token AFTER session is fully initialized
-    // This ensures token is tied to the correct sessionId
-    const csrfToken = generateCsrfToken(req, res);
-    
-    logLoginAttempt({
-      email: user.email,
-      userId: user.id,
-      success: true,
-      ip: req.ip,
-      userAgent: req.get('user-agent'),
-    });
+  const accessToken = generateAccessToken(user.id, roleNames, user.tokenVersion || 1);
+  const { token: refreshToken, jti } = generateRefreshToken(user.id);
+  
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  await storage.createRefreshToken({
+    userId: user.id,
+    jti,
+    expiresAt,
+    userAgent: req.get('user-agent') || null,
+    ipAddress: req.ip || null,
+  });
+  
+  res.cookie('accessToken', accessToken, {
+    httpOnly: true,
+    secure: env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    maxAge: 15 * 60 * 1000,
+    path: '/',
+  });
+  
+  res.cookie('refreshToken', refreshToken, {
+    httpOnly: true,
+    secure: env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+    path: '/api/auth/refresh',
+  });
+  
+  logLoginAttempt({
+    email: user.email,
+    userId: user.id,
+    success: true,
+    ip: req.ip,
+    userAgent: req.get('user-agent'),
+  });
 
-    res.json({
-      user: {
-        id: user.id,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        phone: user.phone,
-        isVerified: user.isVerified,
-        bonusBalance: user.bonusBalance,
-        roles: roleNames,
-      },
-      csrfToken,
-    });
-  } catch (error) {
-    logger.error('Session initialization failed during login', { error });
-    return res.status(500).json({ message: "Ошибка входа" });
-  }
+  res.json({
+    user: {
+      id: user.id,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      phone: user.phone,
+      isVerified: user.isVerified,
+      bonusBalance: user.bonusBalance,
+      roles: roleNames,
+    },
+  });
 });
 
 router.post("/logout", authenticateToken, async (req, res) => {
-  req.session.destroy((err) => {
-    if (err) {
-      return res.status(500).json({ message: "Ошибка выхода" });
+  try {
+    const refreshToken = req.cookies.refreshToken;
+    if (refreshToken) {
+      try {
+        const payload = verifyRefreshToken(refreshToken);
+        await storage.deleteRefreshToken(payload.jti);
+      } catch (error) {
+        logger.warn('Invalid refresh token during logout', { error });
+      }
     }
-    res.clearCookie('sessionId');
+    
+    res.clearCookie('accessToken', { path: '/' });
+    res.clearCookie('refreshToken', { path: '/api/auth/refresh' });
+    
     res.json({ message: "Выход выполнен" });
-  });
+  } catch (error) {
+    logger.error('Logout error', { error });
+    res.status(500).json({ message: "Ошибка выхода" });
+  }
+});
+
+router.post("/refresh", async (req, res) => {
+  try {
+    const refreshToken = req.cookies.refreshToken;
+    
+    if (!refreshToken) {
+      return res.status(401).json({ message: 'Refresh token отсутствует' });
+    }
+    
+    let payload;
+    try {
+      payload = verifyRefreshToken(refreshToken);
+    } catch (error) {
+      return res.status(401).json({ message: 'Невалидный refresh token' });
+    }
+    
+    const isValid = await storage.validateRefreshToken(payload.jti);
+    if (!isValid) {
+      return res.status(401).json({ message: 'Refresh token отозван' });
+    }
+    
+    const user = await storage.getUser(payload.userId);
+    if (!user) {
+      return res.status(401).json({ message: 'Пользователь не найден' });
+    }
+    
+    const userRoles = await storage.getUserRoles(user.id);
+    const roles = userRoles.map(r => r.role);
+    
+    const newAccessToken = generateAccessToken(user.id, roles, user.tokenVersion || 1);
+    
+    const { token: newRefreshToken, jti: newJti } = generateRefreshToken(user.id);
+    
+    await storage.deleteRefreshToken(payload.jti);
+    
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    await storage.createRefreshToken({
+      userId: user.id,
+      jti: newJti,
+      expiresAt,
+      userAgent: req.get('user-agent') || null,
+      ipAddress: req.ip || null,
+    });
+    
+    res.cookie('accessToken', newAccessToken, {
+      httpOnly: true,
+      secure: env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 15 * 60 * 1000,
+      path: '/',
+    });
+    
+    res.cookie('refreshToken', newRefreshToken, {
+      httpOnly: true,
+      secure: env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      path: '/api/auth/refresh',
+    });
+    
+    res.json({ success: true });
+  } catch (error) {
+    logger.error('Token refresh error', { error });
+    res.status(500).json({ message: 'Ошибка обновления токена' });
+  }
 });
 
 router.get("/verify-email", async (req, res) => {
@@ -253,16 +340,6 @@ router.get("/me", authenticateToken, async (req, res) => {
   });
 });
 
-router.get("/session-status", async (req, res) => {
-  // Check if session exists and has userId
-  const isReady = !!(req.sessionID && req.session?.userId);
-  
-  res.json({ 
-    isReady,
-    hasSession: !!req.sessionID,
-    hasUserId: !!req.session?.userId,
-  });
-});
 
 router.put("/profile", authenticateToken, async (req, res) => {
   try {
@@ -323,20 +400,45 @@ router.put("/password", authenticateToken, passwordChangeLimiter, async (req, re
       passwordHash: newPasswordHash,
     });
 
-    await invalidateAllUserSessions(req.userId!);
-
-    req.session.destroy((err) => {
-      if (err) {
-        logger.error('Failed to destroy current session after password change', { 
-          userId: req.userId, 
-          error: err.message 
-        });
-      }
+    const newVersion = await storage.incrementTokenVersion(req.userId!);
+    
+    await storage.deleteAllRefreshTokens(req.userId!);
+    
+    invalidateUserCache(req.userId!);
+    
+    const userRoles = await storage.getUserRoles(req.userId!);
+    const roles = userRoles.map(r => r.role);
+    
+    const accessToken = generateAccessToken(req.userId!, roles, newVersion);
+    const { token: refreshToken, jti } = generateRefreshToken(req.userId!);
+    
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    await storage.createRefreshToken({
+      userId: req.userId!,
+      jti,
+      expiresAt,
+      userAgent: req.get('user-agent') || null,
+      ipAddress: req.ip || null,
     });
-
-    res.clearCookie('sessionId');
+    
+    res.cookie('accessToken', accessToken, {
+      httpOnly: true,
+      secure: env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 15 * 60 * 1000,
+      path: '/',
+    });
+    
+    res.cookie('refreshToken', refreshToken, {
+      httpOnly: true,
+      secure: env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      path: '/api/auth/refresh',
+    });
+    
     res.json({ 
-      message: "Пароль успешно изменён. Все активные сессии завершены. Пожалуйста, войдите снова." 
+      message: "Пароль успешно изменён. Все устройства отключены, вы вошли заново на этом устройстве." 
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -366,20 +468,14 @@ router.delete("/account", authenticateToken, passwordChangeLimiter, async (req, 
       return res.status(401).json({ message: "Неверный пароль" });
     }
 
+    await storage.deleteAllRefreshTokens(req.userId!);
+
     await storage.deleteUserAccount(req.userId!);
 
-    await invalidateAllUserSessions(req.userId!);
+    invalidateUserCache(req.userId!);
 
-    req.session.destroy((err) => {
-      if (err) {
-        logger.error('Failed to destroy session after account deletion', { 
-          userId: req.userId, 
-          error: err.message 
-        });
-      }
-    });
-
-    res.clearCookie('sessionId');
+    res.clearCookie('accessToken', { path: '/' });
+    res.clearCookie('refreshToken', { path: '/api/auth/refresh' });
     
     logger.info('User account deleted', { 
       userId: req.userId,
