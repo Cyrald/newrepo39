@@ -20,15 +20,68 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    public code?: string,
   ) {
     super(message);
     this.name = "ApiError";
   }
 }
 
+let accessToken: string | null = null;
+let isRefreshing = false;
+let refreshPromise: Promise<string> | null = null;
+
+export function setAccessToken(token: string | null) {
+  accessToken = token;
+}
+
+export function getAccessToken(): string | null {
+  return accessToken;
+}
+
+async function refreshAccessToken(): Promise<string> {
+  if (isRefreshing && refreshPromise) {
+    return refreshPromise;
+  }
+
+  isRefreshing = true;
+  refreshPromise = (async () => {
+    try {
+      const response = await fetch("/api/auth/refresh", {
+        method: "POST",
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        accessToken = null;
+        throw new Error("REFRESH_FAILED");
+      }
+
+      const data = await response.json();
+      accessToken = data.accessToken;
+      return data.accessToken;
+    } finally {
+      isRefreshing = false;
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
+}
+
+export async function initializeAuth(): Promise<boolean> {
+  try {
+    await refreshAccessToken();
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
 async function fetchApi<T>(
   endpoint: string,
   options: RequestInit = {},
+  retryCount = 0,
 ): Promise<T> {
   const isFormData = options.body instanceof FormData;
   
@@ -40,40 +93,80 @@ async function fetchApi<T>(
     headers["Content-Type"] = "application/json";
   }
 
+  if (accessToken && !endpoint.includes("/auth/refresh")) {
+    headers["Authorization"] = `Bearer ${accessToken}`;
+  }
+
   const response = await fetch(endpoint, {
     ...options,
     headers,
     credentials: 'include',
   });
 
+  if (response.status === 401 && retryCount === 0) {
+    if (endpoint.includes("/auth/login") || endpoint.includes("/auth/register") || endpoint.includes("/auth/refresh")) {
+      const errorData = await response.json().catch(() => ({
+        message: "Произошла ошибка",
+      }));
+      throw new ApiError(
+        response.status, 
+        errorData.message || "Произошла ошибка",
+        errorData.code
+      );
+    }
+    
+    try {
+      await refreshAccessToken();
+      return fetchApi<T>(endpoint, options, retryCount + 1);
+    } catch (refreshError) {
+      accessToken = null;
+      if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+        window.location.href = "/login";
+      }
+      throw new ApiError(401, "Сессия истекла", "SESSION_EXPIRED");
+    }
+  }
+
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({
       message: "Произошла ошибка",
     }));
-    throw new ApiError(response.status, errorData.message || "Произошла ошибка");
+    throw new ApiError(
+      response.status, 
+      errorData.message || "Произошла ошибка",
+      errorData.code
+    );
   }
 
   return response.json();
 }
 
-// Аутентификация
 export const authApi = {
-  register: (data: RegisterInput) =>
-    fetchApi<{ user: User }>("/api/auth/register", {
+  register: async (data: RegisterInput) => {
+    const result = await fetchApi<{ user: User; accessToken: string }>("/api/auth/register", {
       method: "POST",
       body: JSON.stringify(data),
-    }),
+    });
+    setAccessToken(result.accessToken);
+    return result;
+  },
 
-  login: (data: LoginInput) =>
-    fetchApi<{ user: User }>("/api/auth/login", {
+  login: async (data: LoginInput) => {
+    const result = await fetchApi<{ user: User; accessToken: string }>("/api/auth/login", {
       method: "POST",
       body: JSON.stringify(data),
-    }),
+    });
+    setAccessToken(result.accessToken);
+    return result;
+  },
 
-  logout: () =>
-    fetchApi<{ message: string }>("/api/auth/logout", {
+  logout: async () => {
+    const result = await fetchApi<{ message: string }>("/api/auth/logout", {
       method: "POST",
-    }),
+    });
+    setAccessToken(null);
+    return result;
+  },
 
   verifyEmail: (token: string) =>
     fetchApi<{ success: boolean }>(`/api/auth/verify-email?token=${token}`),
@@ -91,14 +184,32 @@ export const authApi = {
       body: JSON.stringify(data),
     }),
 
-  updatePassword: (data: { currentPassword: string; newPassword: string }) =>
-    fetchApi<{ message: string }>("/api/auth/password", {
+  updatePassword: async (data: { currentPassword: string; newPassword: string }) => {
+    const result = await fetchApi<{ message: string }>("/api/auth/password", {
       method: "PUT",
       body: JSON.stringify(data),
+    });
+    setAccessToken(null);
+    return result;
+  },
+  
+  getSessions: () =>
+    fetchApi<{ sessions: Array<{
+      id: string;
+      tfid: string;
+      userAgent: string | null;
+      ipAddress: string | null;
+      lastActivityAt: Date;
+      expiresAt: Date;
+      createdAt: Date;
+    }> }>("/api/auth/sessions"),
+  
+  deleteSession: (sessionId: string) =>
+    fetchApi<{ message: string }>(`/api/auth/sessions/${sessionId}`, {
+      method: "DELETE",
     }),
 };
 
-// Категории
 export const categoriesApi = {
   getAll: () => fetchApi<Category[]>("/api/categories"),
   
@@ -122,7 +233,6 @@ export const categoriesApi = {
     }),
 };
 
-// Товары
 export const productsApi = {
   getAll: (params?: {
     categoryId?: string;
@@ -162,7 +272,7 @@ export const productsApi = {
     fetchApi<Product>("/api/products", {
       method: "POST",
       body: data,
-      headers: {}, // Удаляем Content-Type для FormData
+      headers: {},
     }),
 
   update: (id: string, data: Partial<Product>) =>
@@ -200,7 +310,6 @@ export const productsApi = {
     }),
 };
 
-// Корзина
 export const cartApi = {
   get: () => fetchApi<CartItemWithProduct[]>("/api/cart"),
 
@@ -227,7 +336,6 @@ export const cartApi = {
     }),
 };
 
-// Избранное
 export const wishlistApi = {
   get: () => fetchApi<WishlistItemWithProduct[]>("/api/wishlist"),
 
@@ -243,7 +351,6 @@ export const wishlistApi = {
     }),
 };
 
-// Адреса
 export const addressesApi = {
   getAll: () => fetchApi<UserAddress[]>("/api/addresses"),
 
@@ -279,7 +386,6 @@ export const addressesApi = {
     }),
 };
 
-// Платёжные карты
 export const paymentCardsApi = {
   getAll: () => fetchApi<UserPaymentCard[]>("/api/payment-cards"),
 
@@ -305,7 +411,6 @@ export const paymentCardsApi = {
     }),
 };
 
-// Промокоды
 export const promocodesApi = {
   getAll: () => fetchApi<Promocode[]>("/api/promocodes"),
 
@@ -346,7 +451,6 @@ export const promocodesApi = {
     }),
 };
 
-// Заказы
 export const ordersApi = {
   getAll: () => fetchApi<OrderWithTotal[]>("/api/orders"),
 
@@ -386,7 +490,6 @@ export const ordersApi = {
     }),
 };
 
-// Админ статистика
 export const adminApi = {
   getStats: () =>
     fetchApi<{
@@ -405,7 +508,6 @@ export const adminApi = {
     fetchApi<Array<User & { roles: string[] }>>("/api/admin/users"),
 };
 
-// Чат поддержки
 export const supportApi = {
   getMessages: () => fetchApi<SupportMessage[]>("/api/support/messages"),
 

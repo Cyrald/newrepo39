@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { User } from "@shared/schema";
-import { authApi } from "@/lib/api";
+import { authApi, setAccessToken } from "@/lib/api";
 import { useCartStore } from "./cartStore";
 
 interface AuthState {
@@ -8,7 +8,6 @@ interface AuthState {
   isAuthenticated: boolean;
   authInitialized: boolean;
   
-  // Actions
   login: (user: User) => void;
   logout: () => Promise<void>;
   setUser: (user: User) => void;
@@ -34,6 +33,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     } catch (error) {
       console.error('Logout error:', error);
     } finally {
+      setAccessToken(null);
       useCartStore.getState().clear();
       
       set({
@@ -49,7 +49,6 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   },
 
   checkAuth: async () => {
-    // httpOnly cookies недоступны для document.cookie, поэтому просто вызываем API
     try {
       const { user } = await authApi.me();
       set({
@@ -58,7 +57,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         authInitialized: true,
       });
     } catch (error) {
-      // Токен невалиден или отсутствует → сбросить состояние
+      setAccessToken(null);
       set({
         user: null,
         isAuthenticated: false,

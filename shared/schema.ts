@@ -917,6 +917,42 @@ export const changePasswordSchema = z.object({
   path: ["newPassword"],
 });
 
+// ============================================
+// AUTHENTICATION: SESSIONS & REFRESH TOKENS
+// ============================================
+
+export const sessions = pgTable("sessions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  tfid: varchar("tfid").notNull(),
+  userAgent: text("user_agent"),
+  ipAddress: text("ip_address"),
+  lastActivityAt: timestamp("last_activity_at").defaultNow().notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  userIdIdx: index("sessions_user_id_idx").on(table.userId),
+  tfidIdx: index("sessions_tfid_idx").on(table.tfid),
+  expiresAtIdx: index("sessions_expires_at_idx").on(table.expiresAt),
+}));
+
+export const refreshTokens = pgTable("refresh_tokens", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  jti: varchar("jti").notNull().unique(),
+  sessionId: varchar("session_id").notNull().references(() => sessions.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  tfid: varchar("tfid").notNull(),
+  rotationCount: integer("rotation_count").default(0).notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  revokedAt: timestamp("revoked_at"),
+}, (table) => ({
+  jtiIdx: index("refresh_tokens_jti_idx").on(table.jti),
+  sessionIdIdx: index("refresh_tokens_session_id_idx").on(table.sessionId),
+  tfidIdx: index("refresh_tokens_tfid_idx").on(table.tfid),
+  expiresAtIdx: index("refresh_tokens_expires_at_idx").on(table.expiresAt),
+}));
+
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;

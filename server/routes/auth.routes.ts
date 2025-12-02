@@ -1,139 +1,304 @@
 import { Router } from "express";
-import { storage } from "../storage";
 import { authenticateToken } from "../auth";
 import { logger } from "../utils/logger";
+import { 
+  registerUser, 
+  loginUser, 
+  refreshAccessToken, 
+  logoutUser, 
+  changePassword,
+  getUserSessions,
+  deleteSession
+} from "../services/auth.service";
+import { db } from "../db";
+import { users, userRoles } from "@shared/schema";
+import { eq } from "drizzle-orm";
 
 const router = Router();
 
 router.post("/register", async (req, res) => {
-  logger.info('Stub register endpoint called');
-  
-  const user = await storage.getUserByEmail("admin@ecomarket.ru");
-  if (!user) {
-    return res.status(500).json({ message: "Системный пользователь не найден" });
+  try {
+    const { email, password, firstName, lastName, patronymic, phone } = req.body;
+    
+    if (!email || !password || !firstName || !phone) {
+      return res.status(400).json({ 
+        message: "Отсутствуют обязательные поля",
+        code: "MISSING_FIELDS"
+      });
+    }
+
+    const user = await registerUser({
+      email,
+      password,
+      firstName,
+      lastName,
+      patronymic,
+      phone,
+    });
+
+    const loginResult = await loginUser(email, password, req);
+
+    res.cookie('refreshToken', loginResult.refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 14 * 24 * 60 * 60 * 1000,
+      path: '/api/auth/refresh',
+    });
+
+    res.status(201).json({
+      message: "Регистрация успешна",
+      user: loginResult.user,
+      accessToken: loginResult.accessToken,
+    });
+  } catch (error: any) {
+    if (error.message === 'EMAIL_ALREADY_EXISTS') {
+      return res.status(409).json({ 
+        message: "Email уже используется",
+        code: "EMAIL_EXISTS"
+      });
+    }
+    
+    logger.error('Registration error', { error });
+    res.status(500).json({ 
+      message: "Ошибка регистрации",
+      code: "REGISTRATION_ERROR"
+    });
   }
-
-  const roles = await storage.getUserRoles(user.id);
-  const roleNames = roles.map(r => r.role);
-
-  res.json({
-    user: {
-      id: user.id,
-      email: user.email,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      phone: user.phone,
-      isVerified: user.isVerified,
-      bonusBalance: user.bonusBalance,
-      roles: roleNames,
-    },
-  });
 });
 
 router.post("/login", async (req, res) => {
-  logger.info('Stub login endpoint called');
-  
-  const user = await storage.getUserByEmail("admin@ecomarket.ru");
-  if (!user) {
-    return res.status(500).json({ message: "Системный пользователь не найден" });
+  try {
+    const { email, password } = req.body;
+    
+    if (!email || !password) {
+      return res.status(400).json({ 
+        message: "Email и пароль обязательны",
+        code: "MISSING_CREDENTIALS"
+      });
+    }
+
+    const result = await loginUser(email, password, req);
+
+    res.cookie('refreshToken', result.refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 14 * 24 * 60 * 60 * 1000,
+      path: '/api/auth/refresh',
+    });
+
+    res.json({
+      message: "Вход выполнен успешно",
+      user: result.user,
+      accessToken: result.accessToken,
+    });
+  } catch (error: any) {
+    if (error.message === 'INVALID_CREDENTIALS') {
+      return res.status(401).json({ 
+        message: "Неверный email или пароль",
+        code: "INVALID_CREDENTIALS"
+      });
+    }
+    
+    if (error.message === 'USER_BANNED') {
+      return res.status(403).json({ 
+        message: "Пользователь заблокирован",
+        code: "USER_BANNED"
+      });
+    }
+    
+    if (error.message === 'USER_DELETED') {
+      return res.status(403).json({ 
+        message: "Пользователь удалён",
+        code: "USER_DELETED"
+      });
+    }
+    
+    logger.error('Login error', { error });
+    res.status(500).json({ 
+      message: "Ошибка входа",
+      code: "LOGIN_ERROR"
+    });
   }
-
-  const roles = await storage.getUserRoles(user.id);
-  const roleNames = roles.map(r => r.role);
-
-  res.json({
-    user: {
-      id: user.id,
-      email: user.email,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      phone: user.phone,
-      isVerified: user.isVerified,
-      bonusBalance: user.bonusBalance,
-      roles: roleNames,
-    },
-  });
 });
 
 router.post("/logout", authenticateToken, async (req, res) => {
-  logger.info('Stub logout endpoint called');
-  res.json({ message: "Выход выполнен" });
+  try {
+    if (!req.tfid || !req.userId) {
+      return res.status(401).json({ 
+        message: "Требуется авторизация",
+        code: "UNAUTHORIZED"
+      });
+    }
+
+    await logoutUser(req.tfid, req.userId);
+
+    res.clearCookie('refreshToken', { 
+      path: '/api/auth/refresh' 
+    });
+
+    res.json({ message: "Выход выполнен успешно" });
+  } catch (error) {
+    logger.error('Logout error', { error });
+    res.status(500).json({ 
+      message: "Ошибка выхода",
+      code: "LOGOUT_ERROR"
+    });
+  }
 });
 
 router.post("/refresh", async (req, res) => {
-  logger.info('Stub refresh endpoint called');
-  res.json({ success: true });
-});
+  try {
+    const refreshToken = req.cookies.refreshToken;
+    
+    if (!refreshToken) {
+      return res.status(401).json({ 
+        message: "Refresh token отсутствует",
+        code: "MISSING_REFRESH_TOKEN"
+      });
+    }
 
-router.get("/verify-email", async (req, res) => {
-  logger.info('Stub verify-email endpoint called');
-  res.json({ message: "Email успешно подтверждён" });
-});
+    const result = await refreshAccessToken(refreshToken);
 
-router.post("/resend-verification", authenticateToken, async (req, res) => {
-  logger.info('Stub resend-verification endpoint called');
-  res.json({ message: "Письмо для подтверждения отправлено повторно" });
+    res.cookie('refreshToken', result.refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 14 * 24 * 60 * 60 * 1000,
+      path: '/api/auth/refresh',
+    });
+
+    res.json({
+      accessToken: result.accessToken,
+    });
+  } catch (error: any) {
+    if (error.message === 'INVALID_REFRESH_TOKEN') {
+      res.clearCookie('refreshToken', { path: '/api/auth/refresh' });
+      return res.status(401).json({ 
+        message: "Неверный refresh token",
+        code: "INVALID_REFRESH_TOKEN"
+      });
+    }
+    
+    if (error.message === 'TOKEN_REVOKED' || error.message === 'SESSION_REVOKED') {
+      res.clearCookie('refreshToken', { path: '/api/auth/refresh' });
+      return res.status(401).json({ 
+        message: "Сессия отозвана",
+        code: "SESSION_REVOKED"
+      });
+    }
+    
+    if (error.message === 'TOKEN_REUSE_DETECTED') {
+      res.clearCookie('refreshToken', { path: '/api/auth/refresh' });
+      return res.status(401).json({ 
+        message: "Обнаружено повторное использование токена",
+        code: "TOKEN_REUSE_DETECTED"
+      });
+    }
+    
+    if (error.message === 'MAX_ROTATION_EXCEEDED') {
+      res.clearCookie('refreshToken', { path: '/api/auth/refresh' });
+      return res.status(401).json({ 
+        message: "Превышен лимит обновлений токена",
+        code: "MAX_ROTATION_EXCEEDED"
+      });
+    }
+    
+    logger.error('Refresh error', { error });
+    res.status(500).json({ 
+      message: "Ошибка обновления токена",
+      code: "REFRESH_ERROR"
+    });
+  }
 });
 
 router.get("/me", authenticateToken, async (req, res) => {
-  const user = await storage.getUser(req.userId!);
-  
-  if (!user) {
-    return res.status(404).json({ message: "Пользователь не найден" });
+  try {
+    const user = await db.select().from(users).where(eq(users.id, req.userId!)).limit(1);
+    
+    if (!user || user.length === 0) {
+      return res.status(404).json({ message: "Пользователь не найден" });
+    }
+
+    const roles = await db.select().from(userRoles).where(eq(userRoles.userId, req.userId!));
+    const roleNames = roles.map(r => r.role);
+
+    res.json({
+      user: {
+        id: user[0].id,
+        email: user[0].email,
+        firstName: user[0].firstName,
+        lastName: user[0].lastName,
+        patronymic: user[0].patronymic,
+        phone: user[0].phone,
+        isVerified: user[0].isVerified,
+        bonusBalance: user[0].bonusBalance,
+        roles: roleNames,
+      },
+    });
+  } catch (error) {
+    logger.error('Get user error', { error });
+    res.status(500).json({ message: "Ошибка получения данных пользователя" });
   }
-
-  const roles = await storage.getUserRoles(user.id);
-  const roleNames = roles.map(r => r.role);
-
-  res.json({
-    user: {
-      id: user.id,
-      email: user.email,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      patronymic: user.patronymic,
-      phone: user.phone,
-      isVerified: user.isVerified,
-      bonusBalance: user.bonusBalance,
-      roles: roleNames,
-    },
-  });
-});
-
-router.put("/profile", authenticateToken, async (req, res) => {
-  logger.info('Stub profile update endpoint called');
-  
-  const user = await storage.getUser(req.userId!);
-  const roles = await storage.getUserRoles(req.userId!);
-  const roleNames = roles.map(r => r.role);
-
-  res.json({
-    user: {
-      id: user!.id,
-      email: user!.email,
-      firstName: user!.firstName,
-      lastName: user!.lastName,
-      patronymic: user!.patronymic,
-      phone: user!.phone,
-      isVerified: user!.isVerified,
-      bonusBalance: user!.bonusBalance,
-      roles: roleNames,
-    },
-  });
 });
 
 router.put("/password", authenticateToken, async (req, res) => {
-  logger.info('Stub password update endpoint called');
-  res.json({ 
-    message: "Пароль успешно изменён" 
-  });
+  try {
+    const { currentPassword, newPassword } = req.body;
+    
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ 
+        message: "Текущий и новый пароли обязательны",
+        code: "MISSING_FIELDS"
+      });
+    }
+
+    await changePassword(req.userId!, currentPassword, newPassword);
+
+    res.clearCookie('refreshToken', { path: '/api/auth/refresh' });
+
+    res.json({ 
+      message: "Пароль успешно изменён. Все сессии завершены." 
+    });
+  } catch (error: any) {
+    if (error.message === 'INVALID_PASSWORD') {
+      return res.status(401).json({ 
+        message: "Неверный текущий пароль",
+        code: "INVALID_PASSWORD"
+      });
+    }
+    
+    logger.error('Password change error', { error });
+    res.status(500).json({ 
+      message: "Ошибка изменения пароля",
+      code: "PASSWORD_CHANGE_ERROR"
+    });
+  }
 });
 
-router.delete("/account", authenticateToken, async (req, res) => {
-  logger.info('Stub account deletion endpoint called');
-  res.json({ 
-    message: "Аккаунт успешно удалён" 
-  });
+router.get("/sessions", authenticateToken, async (req, res) => {
+  try {
+    const sessions = await getUserSessions(req.userId!);
+    res.json({ sessions });
+  } catch (error) {
+    logger.error('Get sessions error', { error });
+    res.status(500).json({ message: "Ошибка получения сессий" });
+  }
+});
+
+router.delete("/sessions/:sessionId", authenticateToken, async (req, res) => {
+  try {
+    await deleteSession(req.userId!, req.params.sessionId);
+    res.json({ message: "Сессия удалена" });
+  } catch (error: any) {
+    if (error.message === 'SESSION_NOT_FOUND') {
+      return res.status(404).json({ message: "Сессия не найдена" });
+    }
+    
+    logger.error('Delete session error', { error });
+    res.status(500).json({ message: "Ошибка удаления сессии" });
+  }
 });
 
 export default router;

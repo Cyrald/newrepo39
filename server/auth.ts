@@ -1,49 +1,11 @@
 import bcrypt from "bcryptjs";
 import { type Request, type Response, type NextFunction } from "express";
 import { logger } from "./utils/logger";
-import { db } from "./db";
-import { users, userRoles } from "@shared/schema";
-import { eq } from "drizzle-orm";
+import { verifyAccessToken } from "./utils/jwt";
+import { tokenBlacklist } from "./utils/blacklist";
+import { getUserStatus, invalidateUserCache as invalidateCacheUtil } from "./utils/userCache";
 
 const DUMMY_PASSWORD_HASH = "$2a$10$DummyHashForTimingAttackProtectionXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
-
-let ANONYMOUS_USER_ID: string | null = null;
-let ANONYMOUS_USER_ROLES: string[] = [];
-
-async function getAnonymousUser() {
-  if (ANONYMOUS_USER_ID) {
-    return { id: ANONYMOUS_USER_ID, roles: ANONYMOUS_USER_ROLES };
-  }
-
-  try {
-    const adminUser = await db
-      .select()
-      .from(users)
-      .where(eq(users.email, "admin@ecomarket.ru"))
-      .limit(1);
-
-    if (adminUser.length > 0) {
-      const roles = await db
-        .select()
-        .from(userRoles)
-        .where(eq(userRoles.userId, adminUser[0].id));
-
-      ANONYMOUS_USER_ID = adminUser[0].id;
-      ANONYMOUS_USER_ROLES = roles.map(r => r.role);
-
-      logger.info('Anonymous user initialized', { 
-        userId: ANONYMOUS_USER_ID, 
-        roles: ANONYMOUS_USER_ROLES 
-      });
-
-      return { id: ANONYMOUS_USER_ID, roles: ANONYMOUS_USER_ROLES };
-    }
-  } catch (error) {
-    logger.error('Failed to get anonymous user', { error });
-  }
-
-  return { id: "1", roles: ["admin", "customer"] };
-}
 
 export async function hashPassword(password: string): Promise<string> {
   const salt = await bcrypt.genSalt(10);
@@ -65,6 +27,7 @@ declare global {
     interface Request {
       userId?: string;
       userRoles?: string[];
+      tfid?: string;
     }
   }
 }
@@ -74,28 +37,128 @@ export async function authenticateToken(
   res: Response,
   next: NextFunction
 ): Promise<void> {
-  const anonUser = await getAnonymousUser();
-  req.userId = anonUser.id;
-  req.userRoles = anonUser.roles;
-  
-  logger.debug('Stub authentication', { 
-    userId: req.userId, 
-    roles: req.userRoles 
-  });
-  
-  next();
+  try {
+    const authHeader = req.headers.authorization;
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      res.status(401).json({ 
+        message: "Требуется авторизация",
+        code: "MISSING_TOKEN"
+      });
+      return;
+    }
+
+    const token = authHeader.substring(7);
+    
+    let payload;
+    try {
+      payload = verifyAccessToken(token);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'UNKNOWN_ERROR';
+      
+      if (errorMessage === 'TOKEN_EXPIRED') {
+        res.status(401).json({ 
+          message: "Токен истёк", 
+          code: "TOKEN_EXPIRED" 
+        });
+        return;
+      }
+      
+      res.status(401).json({ 
+        message: "Неверный токен", 
+        code: "INVALID_TOKEN" 
+      });
+      return;
+    }
+
+    if (tokenBlacklist.isFamilyBlacklisted(payload.tfid)) {
+      logger.warn('Attempt to use blacklisted token family', {
+        userId: payload.userId,
+        tfid: payload.tfid
+      });
+      res.status(401).json({ 
+        message: "Сессия инвалидирована", 
+        code: "SESSION_REVOKED" 
+      });
+      return;
+    }
+
+    const userStatus = await getUserStatus(payload.userId);
+    
+    if (payload.v < userStatus.tokenVersion) {
+      logger.warn('Revoked token attempt', {
+        userId: payload.userId,
+        tokenVersion: payload.v,
+        currentVersion: userStatus.tokenVersion
+      });
+      res.status(401).json({ 
+        message: "Токен отозван", 
+        code: "TOKEN_REVOKED" 
+      });
+      return;
+    }
+    
+    if (userStatus.deletedAt) {
+      logger.warn('Deleted user attempt', { userId: payload.userId });
+      res.status(401).json({ 
+        message: "Пользователь удалён", 
+        code: "USER_DELETED" 
+      });
+      return;
+    }
+    
+    if (userStatus.banned) {
+      logger.warn('Banned user attempt', { userId: payload.userId });
+      res.status(403).json({ 
+        message: "Пользователь заблокирован", 
+        code: "USER_BANNED" 
+      });
+      return;
+    }
+
+    req.userId = payload.userId;
+    req.userRoles = payload.roles;
+    req.tfid = payload.tfid;
+    
+    next();
+  } catch (error) {
+    logger.error('Authentication middleware error', { error });
+    res.status(500).json({ 
+      message: "Ошибка аутентификации",
+      code: "AUTH_ERROR"
+    });
+  }
 }
 
 export function invalidateUserCache(userId: string) {
-  logger.debug('User cache invalidation stub', { userId });
+  invalidateCacheUtil(userId);
 }
 
 export function requireRole(...roles: string[]) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    logger.debug('Stub role check - always allowed', { 
-      requestedRoles: roles, 
-      userId: req.userId 
-    });
+    if (!req.userId || !req.userRoles) {
+      res.status(401).json({ 
+        message: "Требуется авторизация",
+        code: "UNAUTHORIZED"
+      });
+      return;
+    }
+
+    const hasRole = roles.some(role => req.userRoles?.includes(role));
+    
+    if (!hasRole) {
+      logger.warn('Insufficient permissions', { 
+        userId: req.userId, 
+        requiredRoles: roles, 
+        userRoles: req.userRoles 
+      });
+      res.status(403).json({ 
+        message: "Недостаточно прав доступа",
+        code: "FORBIDDEN"
+      });
+      return;
+    }
+    
     next();
   };
 }

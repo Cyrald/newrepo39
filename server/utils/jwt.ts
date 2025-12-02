@@ -1,10 +1,12 @@
 import jwt from 'jsonwebtoken';
 import { nanoid } from 'nanoid';
 import { env } from '../env';
+import { logger } from './logger';
 
 export interface AccessTokenPayload {
   userId: string;
   roles: string[];
+  tfid: string;
   v: number;
   iat: number;
   exp: number;
@@ -13,36 +15,103 @@ export interface AccessTokenPayload {
 export interface RefreshTokenPayload {
   userId: string;
   jti: string;
+  tfid: string;
   iat: number;
   exp: number;
+}
+
+function getPrivateKey(): string {
+  const key = Buffer.from(env.JWT_PRIVATE_KEY, 'base64').toString('utf-8');
+  return key;
+}
+
+function getPublicKey(): string {
+  const key = Buffer.from(env.JWT_PUBLIC_KEY, 'base64').toString('utf-8');
+  return key;
 }
 
 export function generateAccessToken(
   userId: string, 
   roles: string[], 
+  tfid: string,
   tokenVersion: number
 ): string {
-  return jwt.sign(
-    { userId, roles, v: tokenVersion },
-    env.JWT_SECRET,
-    { expiresIn: '15m' }
-  );
+  try {
+    const token = jwt.sign(
+      { userId, roles, tfid, v: tokenVersion },
+      getPrivateKey(),
+      { 
+        algorithm: 'ES256' as const,
+        expiresIn: env.JWT_ACCESS_EXPIRE
+      } as jwt.SignOptions
+    );
+    
+    logger.debug('Access token generated', { userId, tfid, tokenVersion });
+    return token;
+  } catch (error) {
+    logger.error('Failed to generate access token', { error, userId });
+    throw new Error('Token generation failed');
+  }
 }
 
-export function generateRefreshToken(userId: string): { token: string; jti: string } {
-  const jti = nanoid();
-  const token = jwt.sign(
-    { userId, jti },
-    env.JWT_REFRESH_SECRET,
-    { expiresIn: '7d' }
-  );
-  return { token, jti };
+export function generateRefreshToken(userId: string, tfid: string): { token: string; jti: string } {
+  try {
+    const jti = nanoid();
+    const token = jwt.sign(
+      { userId, jti, tfid },
+      getPrivateKey(),
+      { 
+        algorithm: 'ES256' as const,
+        expiresIn: env.JWT_REFRESH_EXPIRE
+      } as jwt.SignOptions
+    );
+    
+    logger.debug('Refresh token generated', { userId, tfid, jti });
+    return { token, jti };
+  } catch (error) {
+    logger.error('Failed to generate refresh token', { error, userId });
+    throw new Error('Token generation failed');
+  }
 }
 
 export function verifyAccessToken(token: string): AccessTokenPayload {
-  return jwt.verify(token, env.JWT_SECRET) as AccessTokenPayload;
+  try {
+    const payload = jwt.verify(token, getPublicKey(), {
+      algorithms: ['ES256']
+    }) as AccessTokenPayload;
+    
+    return payload;
+  } catch (error) {
+    if (error instanceof jwt.TokenExpiredError) {
+      throw new Error('TOKEN_EXPIRED');
+    }
+    if (error instanceof jwt.JsonWebTokenError) {
+      throw new Error('INVALID_TOKEN');
+    }
+    logger.error('Token verification failed', { error });
+    throw new Error('TOKEN_VERIFICATION_FAILED');
+  }
 }
 
 export function verifyRefreshToken(token: string): RefreshTokenPayload {
-  return jwt.verify(token, env.JWT_REFRESH_SECRET) as RefreshTokenPayload;
+  try {
+    const payload = jwt.verify(token, getPublicKey(), {
+      algorithms: ['ES256']
+    }) as RefreshTokenPayload;
+    
+    return payload;
+  } catch (error) {
+    if (error instanceof jwt.TokenExpiredError) {
+      throw new Error('TOKEN_EXPIRED');
+    }
+    if (error instanceof jwt.JsonWebTokenError) {
+      throw new Error('INVALID_TOKEN');
+    }
+    logger.error('Refresh token verification failed', { error });
+    throw new Error('TOKEN_VERIFICATION_FAILED');
+  }
+}
+
+export function generateTokenFamily(): string {
+  return nanoid();
 }

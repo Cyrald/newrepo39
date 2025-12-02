@@ -6,8 +6,10 @@ const envSchema = z.object({
   PORT: z.string().default('5000'),
   DATABASE_URL: z.string().url('DATABASE_URL must be a valid URL'),
   
-  JWT_SECRET: z.string().min(32),
-  JWT_REFRESH_SECRET: z.string().min(32),
+  JWT_PRIVATE_KEY: z.string().min(1, 'JWT_PRIVATE_KEY is required'),
+  JWT_PUBLIC_KEY: z.string().min(1, 'JWT_PUBLIC_KEY is required'),
+  JWT_ACCESS_EXPIRE: z.string().default('15m'),
+  JWT_REFRESH_EXPIRE: z.string().default('14d'),
   
   FRONTEND_URL: z.string().url().optional(),
   REPLIT_DEV_DOMAIN: z.string().optional(),
