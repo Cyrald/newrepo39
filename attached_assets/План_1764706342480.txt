@@ -1,0 +1,440 @@
+# ТЕХНИЧЕСКОЕ ЗАДАНИЕ: СИСТЕМА АУТЕНТИФИКАЦИИ С JWT
+# РЕАКТ + NODE.JS - СТРАТЕГИЯ И ТАКТИКА
+
+## 1. СТРАТЕГИЧЕСКИЕ ЦЕЛИ
+
+### 1.1 Безопасность
+- Zero-trust архитектура
+- Defense in depth
+- Principle of least privilege
+
+### 1.2 Надежность
+- 99.9% uptime аутентификации
+- < 100мс проверка токена
+- Автовосстановление при сбоях
+
+### 1.3 UX
+- Прозрачное обновление токенов
+- Graceful degradation
+- Мгновенная обратная связь
+
+## 2. ТАКТИКА РЕАЛИЗАЦИИ
+
+### 2.1 АРХИТЕКТУРА ТОКЕНОВ
+
+#### 2.1.1 Access Token (AT)
+- Алгоритм: ES256 (ECDSA P-256)
+- Время жизни: 15 минут
+- Хранение: In-memory React state
+- Передача: Authorization: Bearer header
+- Подпись: Private key только в auth service
+
+#### 2.1.2 Refresh Token (RT)
+- Алгоритм: ES256
+- Время жизни: 14 дней
+- Хранение: HTTP-only, Secure, SameSite=Strict cookie
+- Путь: /api/auth/refresh только
+- Одноразовый: Да, ротация при каждом использовании
+
+#### 2.1.3 Token Family System
+- TFID: UUID v4 на сессию
+- Групповая инвалидация по TFID
+- Максимум 10 ротаций на семейство
+
+### 2.2 МЕХАНИЗМ ИНВАЛИДАЦИИ
+
+#### 2.2.1 Полное удаление аккаунта
+Этап 1: Подготовка
+- POST /api/auth/verify-password
+- Генерация deletion_token (24 часа)
+- Email подтверждение
+
+Этап 2: Инвалидация
+- POST /api/users/{id}/delete
+- Все TFID пользователя → blacklist
+- TTL = максимальный expire оставшихся RT
+- 202 Accepted → фронтенд logout
+
+Этап 3: Очистка
+- Фоновая задача
+- Grace period 30 дней
+- Soft delete в БД
+
+#### 2.2.2 Сброс пароля
+Этап 1: Запрос
+- POST /api/auth/password-reset-request
+- Капча + email проверка
+- Reset token (30 минут, одноразовый)
+
+Этап 2: Подтверждение
+- POST /api/auth/password-reset/confirm
+- Все TFID кроме текущего → blacklist
+- Новая сессия с новым паролем
+- Уведомление email
+
+### 2.3 СИСТЕМА ЧЕРНОГО СПИСКА
+
+#### 2.3.1 In-memory хранилище
+Структура:
+- Map: jti → {expiresAt, userId, tfid, reason}
+- Map: tfid → {expiresAt, userId}
+
+Операции:
+- Добавление: O(1)
+- Проверка: O(1)
+- Очистка: Каждые 5 минут
+
+Ограничения:
+- Максимум 100,000 записей
+- LRU кэш при переполнении
+- Автоматическая очистка по TTL
+
+#### 2.3.2 Проверка в middleware
+1. Верификация подписи (public key)
+2. Проверка exp, iat, aud, iss
+3. Проверка jti в blacklist
+4. Проверка tfid в familyBlacklist
+5. Если любая проверка fails → 401
+
+### 2.4 ЗАЩИТА ОТ АТАК
+
+#### 2.4.1 Замена CSRF
+- RT cookie: SameSite=Strict
+- CSRF token: Double-Submit Cookie Pattern
+- Проверка Origin/Referer headers
+- CORS только trusted origins
+
+Поток:
+1. GET /api/auth/csrf-token → cookie + response
+2. Клиент: X-CSRF-Token header
+3. Сервер: header === cookie value
+
+#### 2.4.2 Защита от XSS
+- RT: HTTP-only cookie
+- AT: Только в памяти (useState/useRef)
+- CSP Headers: script-src 'self'
+- DOMPurify на фронтенде
+- Не localStorage для токенов
+
+#### 2.4.3 Защита от replay
+- jti: UUID v4 для каждого токена
+- Blacklist при инвалидации
+- Проверка iat (не из будущего)
+- Максимальное расхождение: 5 минут
+
+### 2.5 ОБНОВЛЕНИЕ ТОКЕНОВ
+
+#### 2.5.1 Автоматическое обновление
+Frontend interceptor:
+1. Запрос с AT
+2. Если 401 → refresh
+3. Новый запрос с новым AT
+4. Если refresh fails → logout
+
+Backend процесс:
+1. POST /api/auth/refresh
+2. Проверка RT cookie
+3. Проверка tfid не в blacklist
+4. Проверка цепочки ≤ 10
+5. Rate limit: 5/15 минут
+6. Генерация нового AT + RT
+
+#### 2.5.2 Ротация RT
+- Каждый RT используется один раз
+- Новый RT при каждом обновлении AT
+- Цепочка прерывается при 11+ → logout
+- Старые jti в blacklist до expire
+
+### 2.6 КОНФИГУРАЦИЯ И КЛЮЧИ
+
+#### 2.6.1 Генерация ключей
+Development:
+openssl ecparam -name prime256v1 -genkey -noout -out private.pem
+openssl ec -in private.pem -pubout -out public.pem
+
+Production:
+- HashiCorp Vault / AWS KMS
+- Ротация каждые 90 дней
+- Overlap 7 дней
+
+#### 2.6.2 Environment variables
+JWT_PRIVATE_KEY=base64_encoded_pem
+JWT_PUBLIC_KEY=base64_encoded_pem
+JWT_ACCESS_EXPIRE=15m
+JWT_REFRESH_EXPIRE=14d
+COOKIE_DOMAIN=.example.com
+SECURE_COOKIES=true
+SAME_SITE=strict
+RATE_LIMIT_WINDOW=15m
+RATE_LIMIT_MAX=100
+
+### 2.7 ОБРАБОТКА ОШИБОК
+
+#### 2.7.1 Клиентские ошибки
+401:
+1. Попытка refresh (1 раз)
+2. Если fails → logout
+3. Redirect на login
+
+403:
+1. Показать "Доступ запрещен"
+2. Не пытаться refresh
+
+429:
+1. Exponential backoff
+2. Показать таймер
+3. Disable кнопки
+
+#### 2.7.2 Серверные ошибки
+Blacklist OOM:
+1. Fallback к проверке только подписи
+2. Log warning
+3. Restart service
+
+Ключи истекли:
+1. Hot reload из файла/KMS
+2. Временные ключи
+3. Alert админам
+
+### 2.8 МОНИТОРИНГ И АУДИТ
+
+#### 2.8.1 Метрики
+- auth_attempts_total{status}
+- token_refreshes_total
+- blacklist_size
+- token_validation_duration
+- active_sessions_count
+
+#### 2.8.2 Алармы
+- >1000 failed auth/5min
+- Blacklist size > 50k
+- Token validation > 200ms p95
+- Refresh token reuse
+
+#### 2.8.3 Логирование
+- Все инвалидации токенов
+- Подозрительная активность
+- Изменения конфигурации ключей
+
+## 3. ЭНДПОИНТЫ API
+
+### 3.1 АУТЕНТИФИКАЦИЯ
+POST   /api/v1/auth/register
+POST   /api/v1/auth/login
+POST   /api/v1/auth/logout
+POST   /api/v1/auth/refresh
+POST   /api/v1/auth/validate
+GET    /api/v1/auth/csrf-token
+
+### 3.2 ПАРОЛИ
+POST   /api/v1/auth/password-reset/request
+POST   /api/v1/auth/password-reset/confirm
+POST   /api/v1/auth/password-change
+POST   /api/v1/auth/password-strength
+
+### 3.3 СЕССИИ
+GET    /api/v1/sessions
+GET    /api/v1/sessions/{sessionId}
+DELETE /api/v1/sessions/{sessionId}
+DELETE /api/v1/sessions/all
+POST   /api/v1/auth/global-logout
+
+### 3.4 АККАУНТ
+GET    /api/v1/users/{userId}
+PUT    /api/v1/users/{userId}
+DELETE /api/v1/users/{userId}
+POST   /api/v1/users/{userId}/deletion/cancel
+POST   /api/v1/users/{userId}/suspension
+
+### 3.5 БЕЗОПАСНОСТЬ
+GET    /api/v1/audit/events
+GET    /api/v1/audit/events/{eventId}
+GET    /api/v1/security/metrics
+POST   /api/v1/security/report-incident
+
+## 4. ПОТОКИ ДАННЫХ
+
+### 4.1 ЛОГИН
+1. Клиент → POST /login {email, password}
+2. Сервер → Проверка credentials + 2FA
+3. Сервер → Генерация tfid (новый)
+4. Сервер → AT (jti1, tfid, 15m)
+5. Сервер → RT (jti2, tfid, 14d)
+6. Сервер → {AT} + Set-Cookie RT
+7. Клиент → AT в memory
+
+### 4.2 ИНВАЛИДАЦИЯ ПРИ СМЕНЕ ПАРОЛЯ
+1. Событие: Password change
+2. Система → Все tfid пользователя → blacklist
+3. Система → TTL = max(expire всех RT)
+4. Клиент → Следующий запрос → 401
+5. Клиент → Refresh → 401 (tfid в blacklist)
+6. Клиент → Logout → Redirect login
+
+### 4.3 ОБНОВЛЕНИЕ ТОКЕНОВ
+1. Клиент → API запрос с AT
+2. Сервер → 401 (AT expired)
+3. Клиент → POST /refresh (RT cookie)
+4. Сервер → Проверка RT + tfid
+5. Сервер → Новый AT + ротация RT
+6. Клиент → Повтор запроса с новым AT
+
+## 5. ТЕСТИРОВАНИЕ
+
+### 5.1 Unit Tests
+- Генерация/верификация JWT
+- Blacklist операции
+- Password hashing
+
+### 5.2 Integration Tests
+- Полный flow: login → API → refresh → logout
+- Инвалидация при смене пароля
+- Инвалидация при удалении аккаунта
+- Rate limiting
+
+### 5.3 Security Tests
+- Проверка headers (CSP, HSTS)
+- XSS/CSRF атаки
+- Timing attacks
+- JWT fuzzing
+
+### 5.4 Load Tests
+- 1000 RPS на проверку токенов
+- 100 одновременных инвалидаций
+- Memory leak detection
+
+## 6. РАЗВЕРТЫВАНИЕ
+
+### 6.1 Pre-deployment Checklist
+- Валидность JWT ключей
+- Тестирование blacklist очистки
+- Валидация CORS настроек
+- Проверка cookie атрибутов
+- Backup старых ключей
+
+### 6.2 Post-deployment Validation
+- Мониторинг 401/403 ошибок
+- Анализ метрик обновления токенов
+- Аудит успешных аутентификаций
+- Проверка CSP reports
+
+### 6.3 Rollback Plan
+- Восстановление старых ключей
+- Очистка blacklist
+- Уведомление пользователей при необходимости
+
+## 7. АВАРИЙНЫЕ ПРОЦЕДУРЫ
+
+### 7.1 Компрометация ключей
+1. Немедленная ротация private key
+2. Инвалидация всех tfid (глобальный blacklist)
+3. Принудительный logout всех пользователей
+4. Уведомление через email/SMS
+5. Мониторинг аномальной активности
+
+### 7.2 DDoS на эндпоинты аутентификации
+1. Активация WAF правил
+2. Увеличение rate limits временно
+3. Статические ключи для critical services
+4. Degrade к базовой аутентификации
+
+### 7.3 Blacklist переполнение
+1. Увеличение лимита до 500k
+2. Агрессивная очистка (каждые 1 минута)
+3. Sampling проверок (1 из 1000)
+4. Логирование для последующего анализа
+
+## 8. КРИТИЧЕСКИЕ ТОЧКИ КОНТРОЛЯ
+
+### 8.1 Обязательные проверки
+1. Private key только в auth service
+2. RT только в http-only cookie
+3. AT только в памяти браузера
+4. Все инвалидации через tfid в blacklist
+5. Все запросы через единый middleware
+
+### 8.2 Запрещенные действия
+1. Хранение токенов в БД/Redis
+2. Передача private key между сервисами
+3. localStorage/sessionStorage для AT
+4. SameSite=None для auth cookies
+5. Симметричное шифрование в production
+
+### 8.3 Обязательные логи
+1. Все выдачи токенов (кто, когда, для кого)
+2. Все инвалидации (кто, когда, почему)
+3. Все попытки обхода защиты
+4. Все изменения ключей
+5. Все security incidents
+
+## 9. ДОКУМЕНТАЦИЯ ДЛЯ КОМАНДЫ
+
+### 9.1 Для разработчиков
+- Архитектура токенов: зачем AT и RT
+- Механизм обновления: как работает interceptor
+- Инвалидация: как работает blacklist
+- Безопасность: почему такие cookie атрибуты
+
+### 9.2 Для DevOps
+- Конфигурация ключей: как генерировать и ротировать
+- Мониторинг: какие метрики смотреть
+- Алармы: на что обращать внимание
+- Backup: как backupить ключи
+
+### 9.3 Для тестировщиков
+- Тест-кейсы аутентификации
+- Сценарии инвалидации
+- Security testing checklist
+- Performance testing параметры
+
+## 10. МИГРАЦИЯ С СТАРОЙ СИСТЕМЫ
+
+### 10.1 Плавный переход
+1. Поддержка старых и новых токенов параллельно
+2. Dual write: выдача двух типов токенов
+3. Постепенный перевод сервисов на новую проверку
+4. Отключение старой системы после миграции
+
+### 10.2 Коммуникация
+1. Уведомление пользователей о смене системы
+2. Документация для разработчиков
+3. Rollback план на случай проблем
+4. Hotline для вопросов и проблем
+
+---
+
+## КРАТКОЕ РЕЗЮМЕ ТАКТИКИ
+
+### ЧТО МЫ ДЕЛАЕМ:
+1. AT (15m) в памяти + RT (14d) в http-only cookie
+2. Token families (tfid) для групповой инвалидации
+3. In-memory blacklist для мгновенной инвалидации
+4. Асимметричные ключи (ES256) для безопасности
+5. SameSite=Strict + CSP для защиты от CSRF/XSS
+
+### КАК МЫ ЭТО ДЕЛАЕМ:
+1. Middleware проверки на каждом запросе
+2. Interceptor на фронтенде для автоматического refresh
+3. LRU кэш blacklist с автоочисткой
+4. Rate limiting на все auth эндпоинты
+5. Подробное логирование и мониторинг
+
+### ЧЕГО ДОСТИГАЕМ:
+✅ Мгновенная инвалидация без БД
+✅ Встроенная защита от CSRF/XSS
+✅ Масштабируемость (публичные ключи)
+✅ Производительность (<100мс)
+✅ Безопасность (modern криптография)
+
+### ТЕХНИЧЕСКИЙ СТЕК:
+- Backend: Node.js, Express, jsonwebtoken, bcrypt
+- Frontend: React, Axios, DOM Purify
+- Инфраструктура: Docker, Nginx, Vault/KMS
+- Мониторинг: Prometheus, Grafana, ELK
+
+---
+
+КОНЕЦ ТЕХНИЧЕСКОГО ЗАДАНИЯ
+Версия: 2.0
+Статус: Для реализации
+Дата: {дата}
