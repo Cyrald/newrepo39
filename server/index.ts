@@ -12,6 +12,7 @@ import { generalApiLimiter } from "./middleware/rateLimiter";
 import { logger } from "./utils/logger";
 import { pool } from "./db";
 import { startDataRetentionScheduler } from "./scheduler";
+import { loadPrivilegedUsersCache } from "./utils/userCache";
 
 const app = express();
 
@@ -139,7 +140,7 @@ app.use(express.urlencoded({
     listenOptions.reusePort = true;
   }
   
-  server.listen(listenOptions, () => {
+  server.listen(listenOptions, async () => {
     logger.info(`Server started`, { 
       port, 
       environment: env.NODE_ENV,
@@ -148,6 +149,7 @@ app.use(express.urlencoded({
     });
     log(`serving on port ${port}`);
 
+    await loadPrivilegedUsersCache();
     startDataRetentionScheduler();
   });
 

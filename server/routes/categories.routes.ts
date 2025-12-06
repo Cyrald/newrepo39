@@ -62,6 +62,18 @@ router.put("/:id", authenticateToken, requireRole("admin", "marketer"), async (r
 });
 
 router.delete("/:id", authenticateToken, requireRole("admin", "marketer"), async (req, res) => {
+  const category = await storage.getCategory(req.params.id);
+  if (!category) {
+    return res.status(404).json({ message: "Категория не найдена" });
+  }
+  
+  const { products } = await storage.getProducts({ categoryId: req.params.id, includeArchived: true, limit: 1 });
+  if (products.length > 0) {
+    return res.status(400).json({ 
+      message: "Невозможно удалить категорию, пока в ней есть товары" 
+    });
+  }
+  
   await storage.deleteCategory(req.params.id);
   res.json({ message: "Категория удалена" });
 });

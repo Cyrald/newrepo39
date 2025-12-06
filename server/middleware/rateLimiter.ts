@@ -81,3 +81,11 @@ export const refreshTokenLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+export const adminLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  max: 60,
+  message: 'Слишком много административных запросов. Попробуйте через минуту.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});

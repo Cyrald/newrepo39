@@ -7,8 +7,11 @@ import { users, products, orders, userRoles } from "@shared/schema";
 import { invalidateUserCache } from "../utils/userCache";
 import { connectedUsers } from "../routes";
 import { logger } from "../utils/logger";
+import { adminLimiter } from "../middleware/rateLimiter";
 
 const router = Router();
+
+router.use(adminLimiter);
 
 router.get("/stats", authenticateToken, requireRole("admin"), async (req, res) => {
   const now = new Date();
@@ -108,6 +111,11 @@ router.post("/users/:userId/ban", authenticateToken, requireRole("admin"), async
   try {
     const { userId } = req.params;
     
+    const user = await storage.getUser(userId);
+    if (!user) {
+      return res.status(404).json({ message: "Пользователь не найден" });
+    }
+    
     await storage.updateUser(userId, { banned: true });
     
     await storage.incrementTokenVersion(userId);
@@ -133,6 +141,11 @@ router.post("/users/:userId/ban", authenticateToken, requireRole("admin"), async
 router.post("/users/:userId/unban", authenticateToken, requireRole("admin"), async (req, res) => {
   try {
     const { userId } = req.params;
+    
+    const user = await storage.getUser(userId);
+    if (!user) {
+      return res.status(404).json({ message: "Пользователь не найден" });
+    }
     
     await storage.updateUser(userId, { banned: false });
     

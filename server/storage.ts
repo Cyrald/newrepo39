@@ -46,6 +46,7 @@ import {
   supportConversations,
   supportMessages,
   supportMessageAttachments,
+  refreshTokens,
 } from "@shared/schema";
 import { eq, and, desc, sql, like, gte, lte, or, inArray, isNull, isNotNull } from "drizzle-orm";
 import { escapeLikePattern } from "./utils/sanitize";
@@ -150,6 +151,8 @@ export interface IStorage {
   updateLastMessageTime(userId: string): Promise<void>;
   searchClosedConversations(filters: { email?: string; dateFrom?: Date; dateTo?: Date }): Promise<{ userId: string; lastMessage: SupportMessage; status: string; closedAt: Date | null }[]>;
   deleteOldMessages(olderThanDays: number): Promise<number>;
+  
+  deleteAllRefreshTokens(userId: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -919,6 +922,10 @@ export class DatabaseStorage implements IStorage {
       .returning();
     
     return result.length;
+  }
+
+  async deleteAllRefreshTokens(userId: string): Promise<void> {
+    await db.delete(refreshTokens).where(eq(refreshTokens.userId, userId));
   }
 }
 
