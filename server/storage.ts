@@ -729,6 +729,15 @@ export class DatabaseStorage implements IStorage {
     return newMsg;
   }
 
+  async getSupportMessage(messageId: string): Promise<SupportMessage | undefined> {
+    const [message] = await db
+      .select()
+      .from(supportMessages)
+      .where(eq(supportMessages.id, messageId))
+      .limit(1);
+    return message;
+  }
+
   async markMessageAsRead(id: string): Promise<void> {
     await db
       .update(supportMessages)

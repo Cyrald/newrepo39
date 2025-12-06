@@ -97,6 +97,11 @@ router.put(
   authenticateToken,
   requireRole("admin", "marketer"),
   async (req, res) => {
+    const existingProduct = await storage.getProduct(req.params.id);
+    if (!existingProduct) {
+      return res.status(404).json({ message: "Товар не найден" });
+    }
+    
     const productData = { ...req.body };
     
     if (productData.discountStartDate && typeof productData.discountStartDate === 'string') {
@@ -116,6 +121,11 @@ router.delete(
   authenticateToken,
   requireRole("admin", "marketer"),
   async (req, res) => {
+    const existingProduct = await storage.getProduct(req.params.id);
+    if (!existingProduct) {
+      return res.status(404).json({ message: "Товар не найден" });
+    }
+    
     await storage.deleteProduct(req.params.id);
     res.json({ message: "Товар удалён" });
   }
@@ -126,6 +136,11 @@ router.delete(
   authenticateToken,
   requireRole("admin"),
   async (req, res) => {
+    const existingProduct = await storage.getProduct(req.params.id);
+    if (!existingProduct) {
+      return res.status(404).json({ message: "Товар не найден" });
+    }
+    
     await storage.permanentDeleteProduct(req.params.id);
     res.json({ message: "Товар удалён навсегда" });
   }
@@ -138,6 +153,11 @@ router.post(
   uploadLimiter,
   productImagesUpload.array("images", 10),
   async (req, res) => {
+    const existingProduct = await storage.getProduct(req.params.id);
+    if (!existingProduct) {
+      return res.status(404).json({ message: "Товар не найден" });
+    }
+    
     const files = req.files as Express.Multer.File[];
     
     if (!files || files.length === 0) {

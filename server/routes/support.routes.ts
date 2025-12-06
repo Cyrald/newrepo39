@@ -178,6 +178,17 @@ export function createSupportRoutes(connectedUsers: Map<string, ConnectedUser>) 
     uploadLimiter,
     chatAttachmentsUpload.array("attachments", 5),
     async (req, res) => {
+      const message = await storage.getSupportMessage(req.params.id);
+      
+      if (!message) {
+        return res.status(404).json({ message: "Сообщение не найдено" });
+      }
+      
+      const isStaff = req.userRoles?.some(role => ['admin', 'consultant'].includes(role));
+      if (!isStaff && message.senderId !== req.userId) {
+        return res.status(403).json({ message: "Нет прав для загрузки вложений к этому сообщению" });
+      }
+      
       const files = req.files as Express.Multer.File[];
       
       if (!files || files.length === 0) {
